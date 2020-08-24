@@ -20,3 +20,200 @@ summary(cars)
 ```
 
 
+```{r}
+library(dplyr)
+library(DESeq2)
+library(GenomicFeatures)
+library(tximport)
+library(rhdf5)
+library(ggplot2)
+library(ggsci)
+library("readr")
+library("tximportData")
+library(apeglm)
+library(tidyverse)
+library(reshape2)
+library(ggrepel)
+library(readr)
+library(ggpubr)
+```
+
+
+#Importing to DeSeq2
+```{r}
+Exp1_Design_DAneurons_metadata <- read.delim("/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2_Biogen/Exp1_Design_DAneurons_metadata.txt")
+Metadata_LRRK2Biogen_filter <- Exp1_Design_DAneurons_metadata[-c(11,12,15,38,44,45,51),] # the 7 numbers listed 11 to 51 in the order of this list there is no kallisto files for.5 out of 7 are D35 anyway...
+metadata_tableD56 <- subset(Metadata_LRRK2Biogen_filter, Day == "D56")
+metadata_tableD56 <- metadata_tableD56[c(1,4,7,10,13,16,18,21,23),] #taking the first technical replicate of every sample
+
+GTFfile <- "/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/homo_sapiens/Homo_sapiens.GRCh38.96.gtf" #load the transcript gtf file
+tx2gene <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/tx2gene.csv")
+paste("The tx2gene table contains ", length(tx2gene$TXNAME), " entries.", sep = "")
+
+files_D56rep1 <- file.path("/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2_Biogen/kallisto_DAneurons_D56_techrep1", metadata_tableD56$ObservationID, "abundance.h5")
+names(files_D56rep1) <- metadata_tableD56$SampleName
+View(files_D56rep1)
+
+txi_DAneuronsrep1 <- tximport(files_D56rep1, type = "kallisto", tx2gene = tx2gene, ignoreTxVersion = T)
+```
+
+```{r}
+dds_LRRK2techrep1 <- DESeqDataSetFromTximport(txi_DAneuronsrep1, colData = metadata_tableD56, design = ~ gender + SampleType)
+
+dds_LRRK2techrep1 <- DESeq(dds_LRRK2techrep1, minReplicatesForReplace = Inf) #filtering the counts
+min_counts <- 10
+keep_feature <- rowMeans(counts(dds_LRRK2techrep1)) >= min_counts 
+dds_LRRK2techrep1 <- dds_LRRK2techrep1[keep_feature, ]
+
+counts_LRRK2 <- counts(dds_LRRK2techrep1, normalized = T)
+
+vsd_LRRK2techrep1 <- vst(dds_LRRK2techrep1, blind = FALSE)
+
+```
+
+#Mean SD plot, Boxplot, gene density plot
+```{r}
+library(vsn)
+meanSD1 <- meanSdPlot(counts(dds_LRRK2techrep1), rank = FALSE) 
+meanSD1$gg + theme_classic() + xlab("Mean") +
+  ylab("Standard deviation") +
+  theme_classic(14) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)),
+      axis.text.x = element_text(hjust = 1)) +
+  ggtitle ("Mean vs SD of unstransformed gene counts LRRK2\n (Connor-Robson et al. 2019)")
+
+meanSD2 <- meanSdPlot(assay(vsd_LRRK2techrep1), rank = FALSE)
+meanSD2$gg + xlab("Mean") +
+  ylab("Standard deviation") +
+  theme_classic(14) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)),
+      axis.text.x = element_text(hjust = 1)) +
+  ggtitle ("Mean vs SD of VST gene counts LRRK2\n (Connor-Robson et al. 2019)")
+
+#The red line on the plots depicts the running median estimator (window-width 10%). If there is no variance-mean dependence, then the line should be approximately horizontal.
+
+#Boxplot
+vsd_LRRK2techrep1.df <- as.data.frame(assay(vsd_LRRK2techrep1))
+boxplot.df <- melt(vsd_LRRK2techrep1.df, variable.name = "Sample", value.name = "Counts")
+
+ggplot(boxplot.df, aes(x = Sample, y = Counts)) +
+  geom_boxplot(fill = "#FFCC99") +
+  ggtitle("Count distribution across samples LRRK2\n (Connor-Robson et al 2019)") +
+  theme_classic() +
+  xlab("Sample Name") +
+  ylab(expression("VST counts")) +
+  theme_classic(16) +
+  theme(panel.grid = element_blank()) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)),
+      axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+
+#Gene density plot
+vsd_LRRK2techrep1.df %>%
+  rownames_to_column("gene") %>%
+  as_tibble() %>%
+  gather(key = sample_name, value = count, -gene) %>%
+  ggplot(aes(count, fill = sample_name, color = sample_name)) +
+  geom_line(stat = "density", adjust = 0.75) +
+  theme_bw() +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1)),
+        axis.text.x = element_text(hjust = 1)) +
+  scale_y_continuous(breaks=c(0,0.3)) +
+  ylab("Density of Read Counts") +
+  xlab("Variance Stabilised Read Count") +
+  facet_grid(rows = vars(sample_name)) + 
+  scale_color_d3() +
+  theme(legend.position = "none") +
+  ggtitle("Gene Density Plot LRRK2\n (Connor-Robson et al. 2019)") +
+  theme(strip.text.y = element_text(angle = 360)) + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+
+```
+
+#Getting results and the LFC shrunken values for results 
+```{r}
+res_LRRK2techrep1 <- results(dds_LRRK2techrep1)
+resultsNames(dds_LRRK2techrep1)
+head(res_LRRK2techrep1)
+resLFCshrink <- lfcShrink(dds_LRRK2techrep1, coef="SampleType_G2019S_vs_Control", type="apeglm") # shrinking the log fold change
+head(resLFCshrink)
+```
+
+#MA Plot before and after shrinkage
+```{r}
+plotMA(res_LRRK2techrep1, ylim=c(-4,4)) # plotting the log fold change as per the mean
+plotMA(resLFCshrink, ylim=c(-4,4))
+```
+
+#Creating a data frame with all the results and counts and saving this 
+```{r}
+counts.df <- data.frame(counts_LRRK2) %>%
+  rownames_to_column(var = "geneid") #counts table to merge with the results table
+
+ResultsandCounts.df.DAneuronsD56 <- data.frame(resLFCshrink) %>%
+  rownames_to_column(var = "geneid") %>% 
+  inner_join(counts.df) %>%
+  filter(padj < 0.1) %>%
+  arrange(padj) %>%
+  #arrange(desc(abs(log2FoldChange))) %>% # could also arrange on the basis of the log2foldchange. rowise was in the original code which I removed
+  mutate("sign" = ifelse(log2FoldChange > 0, "upregulated", "downregulated" ))
+ResultsandCounts.df.DAneuronsD56 <- mutate(ResultsandCounts.df.DAneuronsD56, meancounts_control = rowMeans(ResultsandCounts.df.DAneuronsD56[,c(7,9,11,13)]))
+ResultsandCounts.df.DAneuronsD56 <- mutate(ResultsandCounts.df.DAneuronsD56, meancounts_disease = rowMeans(ResultsandCounts.df.DAneuronsD56[,c(8,10,12,14,15)]))
+as_tibble(ResultsandCounts.df.DAneuronsD56)
+head(ResultsandCounts.df.DAneuronsD56)
+
+biomart_export <- read.delim("/Volumes/Seagate Exp/RWM MSc Rotation/biomart_export.txt") 
+
+ResultsandCounts.df.DAneuronsD56 <- ResultsandCounts.df.DAneuronsD56 %>% # by joining to the biomart export file we are assigning gene names and descriptions to the Gene ID for all the differentially expressed genes
+  left_join(biomart_export,
+  by = c('geneid' = 'Gene.stable.ID'))
+
+which(is.na(ResultsandCounts.df.DAneuronsD56), arr.ind=TRUE)
+
+```
+
+#Making a volcano plot
+```{r}
+#creating the dataframe
+volcanoplot.df.DAneurons <- data.frame(resLFCshrink)#new data frane that is not filtered by the padj values
+volcanoplot.df.DAneurons <- rownames_to_column(volcanoplot.df.DAneurons, "geneid")
+volcanoplot.df.DAneurons <- volcanoplot.df.DAneurons %>% left_join(biomart_export,
+                                      by = c("geneid" = "Gene.stable.ID"))
+threshold <- volcanoplot.df.DAneurons$padj < 0.1 #changed this to 0.1 cut off because the padj value is 0.1
+volcanoplot.df.DAneurons$threshold <- threshold
+volcanoplot.df.DAneurons <- volcanoplot.df.DAneurons[order(volcanoplot.df.DAneurons$padj), ] # ordering by padj values
+
+volcanoplot.df.DAneurons$gene_labels <- "" #creating another column which has empty values "" 
+volcanoplot.df.DAneurons$gene_labels[1:10] <- volcanoplot.df.DAneurons$Gene.name[1:10] # these are the geneIDs with the lowest padj value because they are the first 10 rows in the dataframe
+head(volcanoplot.df.DAneurons)
+
+#trying to change the axis title-proper graph
+ggplot(volcanoplot.df.DAneurons) +
+  geom_point(aes(x=log2FoldChange, y=-log10(padj), colour=threshold)) + #is the log10 adj p value actually log 10 or is it just the adjusted p value- why is it -log 10 rather than just padj value- what is the padj value, should go back and remove the NA values for the means 
+  ggtitle("Differentially expressed genes\n (Connor-Robson et al. 2019)") +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  geom_vline(xintercept = 0, color="grey") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey") +
+  #geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color="grey") +
+  geom_text_repel(aes(x=log2FoldChange, y=-log10(padj), label = gene_labels), size = 3) +
+  coord_cartesian(xlim=c(-7,7)) +
+  theme_classic(16) +
+  theme(panel.grid = element_blank()) +
+ theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75))) 
+
+```
+
+
