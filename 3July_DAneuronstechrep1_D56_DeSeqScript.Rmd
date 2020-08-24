@@ -1,0 +1,501 @@
+---
+title: "3 July DeSeq Biogen DAneurons"
+author: "Tara Diviney"
+date: "7/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(dplyr)
+library(DESeq2)
+library(GenomicFeatures)
+library(tximport)
+library(rhdf5)
+library(ggplot2)
+library(ggsci)
+library("readr")
+library("tximportData")
+library(apeglm)
+library(tidyverse)
+library(reshape2)
+library(ggrepel)
+library(readr)
+library(ggpubr)
+```
+
+#Importing to DeSeq2
+```{r}
+Exp1_Design_DAneurons_metadata <- read.delim("/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2_Biogen/Exp1_Design_DAneurons_metadata.txt")
+Metadata_LRRK2Biogen_filter <- Exp1_Design_DAneurons_metadata[-c(11,12,15,38,44,45,51),] # the 7 numbers listed 11 to 51 in the order of this list there is no kallisto files for.5 out of 7 are D35 anyway...
+metadata_tableD56 <- subset(Metadata_LRRK2Biogen_filter, Day == "D56")
+metadata_tableD56 <- metadata_tableD56[c(1,4,7,10,13,16,18,21,23),] #taking the first technical replicate of every sample
+
+GTFfile <- "/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/homo_sapiens/Homo_sapiens.GRCh38.96.gtf" #load the transcript gtf file
+tx2gene <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/tx2gene.csv")
+paste("The tx2gene table contains ", length(tx2gene$TXNAME), " entries.", sep = "")
+
+files_D56rep1 <- file.path("/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2_Biogen/kallisto_DAneurons_D56_techrep1", metadata_tableD56$ObservationID, "abundance.h5")
+names(files_D56rep1) <- metadata_tableD56$SampleName
+View(files_D56rep1)
+
+txi_DAneuronsrep1 <- tximport(files_D56rep1, type = "kallisto", tx2gene = tx2gene, ignoreTxVersion = T)
+```
+
+```{r}
+dds_LRRK2techrep1 <- DESeqDataSetFromTximport(txi_DAneuronsrep1, colData = metadata_tableD56, design = ~ gender + SampleType)
+
+dds_LRRK2techrep1 <- DESeq(dds_LRRK2techrep1, minReplicatesForReplace = Inf) #filtering the counts
+min_counts <- 10
+keep_feature <- rowMeans(counts(dds_LRRK2techrep1)) >= min_counts 
+dds_LRRK2techrep1 <- dds_LRRK2techrep1[keep_feature, ]
+
+counts_LRRK2 <- counts(dds_LRRK2techrep1, normalized = T)
+counts_LRRK2_df2PK <- as.data.frame(counts_LRRK2)
+write_csv(counts_LRRK2_df2PK, "/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2_Biogen/normalisedcountsPK.csv")
+
+vsd_LRRK2techrep1 <- vst(dds_LRRK2techrep1, blind = FALSE)
+vsd_counts_df2PK <- as.data.frame(assay(vsd_LRRK2techrep1))
+write_csv(vsd_counts_df2PK, "/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2_Biogen/vsdcountsPK.csv")
+```
+
+#Boxplot to show normalization and gene density plot
+```{r}
+library(vsn)
+meanSD1 <- meanSdPlot(counts(dds_LRRK2techrep1), rank = FALSE) 
+meanSD1$gg + theme_classic() + xlab("Mean") +
+  ylab("Standard deviation") +
+  theme_classic(14) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)),
+      axis.text.x = element_text(hjust = 1)) +
+  ggtitle ("Mean vs SD of unstransformed gene counts LRRK2\n (Connor-Robson et al. 2019)")
+
+meanSD1_transformed <- meanSdPlot(counts(dds_LRRK2techrep1), rank = FALSE) 
+meanSD1_transformed$gg + theme_classic() + xlab("Mean") +
+  ylab("Standard deviation") +
+  scale_x_log10() +
+  theme_classic() +
+  ggtitle ("Mean vs SD of unstransformed gene counts LRRK2 (Connor-Robson et al. 2019)")
+
+meanSD1_ranked <- meanSdPlot(counts(dds_LRRK2techrep1), rank = TRUE) 
+meanSD1_ranked$gg + theme_classic() + xlab("Mean") +
+  ylab("Standard deviation") +
+  theme_classic() +
+  ggtitle ("Mean vs SD of unstransformed gene counts LRRK2 (Connor-Robson et al. 2019)")
+
+meanSD2 <- meanSdPlot(assay(vsd_LRRK2techrep1), rank = FALSE)
+meanSD2$gg + xlab("Mean") +
+  ylab("Standard deviation") +
+  theme_classic(14) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)),
+      axis.text.x = element_text(hjust = 1)) +
+  ggtitle ("Mean vs SD of VST gene counts LRRK2\n (Connor-Robson et al. 2019)")
+
+
+
+#The red line on the plots depicts the running median estimator (window-width 10%). If there is no variance-mean dependence, then the line should be approximately horizontal.
+
+meanSdPlot(counts(dds_LRRK2techrep1))
+meanSdPlot(assay(vsd_LRRK2techrep1))
+#Boxplot
+vsd_LRRK2techrep1.df <- as.data.frame(assay(vsd_LRRK2techrep1))
+boxplot.df <- melt(vsd_LRRK2techrep1.df, variable.name = "Sample", value.name = "Counts")
+ggplot(boxplot.df, aes(x = Sample, y = Counts)) +
+  geom_boxplot(fill = "#FFCC99") +
+  ggtitle("Count distribution across samples LRRK2 (Connor-Robson et al 2019)") +
+  theme_classic() +
+  xlab("Sample Name") +
+  ylab(expression("VST counts")) 
+
+#new
+ggplot(boxplot.df, aes(x = Sample, y = Counts)) +
+  geom_boxplot(fill = "#FFCC99") +
+  ggtitle("Count distribution across samples LRRK2\n (Connor-Robson et al 2019)") +
+  theme_classic() +
+  xlab("Sample Name") +
+  ylab(expression("VST counts")) +
+  theme_classic(16) +
+  theme(panel.grid = element_blank()) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)),
+      axis.text.x = element_text(angle = 45, hjust = 1)) 
+ggsave("/Volumes/Seagate Exp/RWM MSc Rotation/Images/dimension_test.png")
+#ggsave("/Volumes/Seagate Exp/RWM MSc Rotation/Images/dimension_test2.png", height = 17, width = 21, units = "cm")
+
+
+#Gene density plot
+vsd_LRRK2techrep1.df %>%
+  rownames_to_column("gene") %>%
+  as_tibble() %>%
+  gather(key = sample_name, value = count, -gene) %>%
+  #inner_join(sample_metadata, by = c("sample_name" = "sample_name")) %>%
+  # filter(age == "old") %>% (didn't do this) %>%
+  ggplot(aes(count, fill = sample_name, color = sample_name)) +
+  geom_line(stat = "density", adjust = 0.75) +
+  theme_bw() +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1)),
+        axis.text.x = element_text(hjust = 1)) +
+  scale_y_continuous(breaks=c(0,0.3)) +
+  ylab("Density of Read Counts") +
+  xlab("Variance Stabilised Read Count") +
+  facet_grid(rows = vars(sample_name)) + 
+  scale_color_d3() +
+  theme(legend.position = "none") +
+  ggtitle("Gene Density Plot LRRK2\n (Connor-Robson et al. 2019)") +
+  theme(strip.text.y = element_text(angle = 360)) + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+ggsave("/Volumes/Seagate Exp/RWM MSc Rotation/Images/LRRK2_Biogen_Revised/revised_again/dimnensionsgenedensityplot.png")
+
+vsd_LRRK2techrep1.df %>%
+  rownames_to_column("gene") %>%
+  as_tibble() %>%
+  gather(key = sample_name, value = count, -gene) %>%
+  #inner_join(sample_metadata, by = c("sample_name" = "sample_name")) %>%
+  # filter(age == "old") %>% (didn't do this) %>%
+  ggplot(aes(count, fill = sample_name, color = sample_name)) +
+  geom_line(stat = "density", adjust = 0.75) +
+  theme_bw() +
+  #scale_color_lancet() +
+  theme( axis.text.x = element_text(hjust = 1)) +
+  scale_y_continuous(breaks=c(0,0.3)) +
+  ylab("Density of Read Counts") +
+  xlab("Variance Stabilised Read Count") +
+  facet_grid(rows = vars(sample_name)) + 
+  scale_color_d3() +
+  theme(legend.position = "none") +
+  ggtitle("Gene Density Plot LRRK2 (Connor-Robson et al. 2019)") +
+  theme(strip.text.y = element_text(angle = 360)) + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+```
+
+#Mean SD plot to show the effects of the vsd transformation. Doing it on normalized counts first and then transformed counts
+```{r, echo=FALSE}
+tibble(mean = rowMeans(counts_LRRK2), var = rowVars(counts_LRRK2)) %>% # creating a tibble with the mean and SD of the counts of each gene 
+  ggplot(aes(x = mean, y = var)) +
+geom_hex(aes(fill = stat(count)), bins=40) +
+  geom_smooth(method = "lm") + # should check this linear regression line.... 
+  theme_classic() +
+  xlab("Mean") +
+  ylab("Variance") +
+  ggtitle("Mean vs Variance of untransformed counts LRRK2 (Connor-Robson)")
+
+tibble(mean = rowMeans(counts_LRRK2), SD = rowSds(counts_LRRK2)) %>% # creating a tibble with the mean and SD of the counts of each gene 
+  ggplot(aes(x = mean, y = SD)) +
+geom_hex(aes(fill = stat(count)), bins=40) +
+  geom_smooth(method = "lm") + # should check this linear regression line.... 
+  theme_classic() +
+  xlab("Mean") +
+  ylab("SD") +
+  ggtitle("Mean vs SD of untransformed counts LRRK2 (Connor-Robson)")
+
+# vst transformed counts
+transformed_counts_DAneuronsD56techrep1 <- assay(vsd_LRRK2techrep1)
+tibble(mean = rowMeans(transformed_counts_DAneuronsD56techrep1), var = rowVars(transformed_counts_DAneuronsD56techrep1)) %>%
+  ggplot(aes(x = mean, y = var, z =)) +
+  geom_hex(aes(fill = stat(count)), bins=40) +
+  geom_smooth(method = "lm") +
+  xlab("Mean") +
+  ylab("Variance") +
+  theme_classic() +
+  ggtitle ("Mean vs variance of VST gene counts LRRK2 (Connor-Robson et al. 2019)")
+
+transformed_counts_DAneuronsD56techrep1 <- assay(vsd_LRRK2techrep1)
+tibble(mean = rowMeans(transformed_counts_DAneuronsD56techrep1), SD = rowSds(transformed_counts_DAneuronsD56techrep1)) %>%
+  ggplot(aes(x = mean, y = SD)) +
+  geom_hex(aes(fill = stat(count)), bins=40) +
+  geom_smooth(method = "lm") +
+  xlab("Mean") +
+  ylab("SD") +
+  theme_classic() +
+  ggtitle("Mean vs variance of VST gene counts LRRK2 (Connor-Robson et al. 2019)")
+
+```
+
+#Getting results and the LFC shrunken values for results 
+```{r}
+res_LRRK2techrep1 <- results(dds_LRRK2techrep1)
+resultsNames(dds_LRRK2techrep1)
+head(res_LRRK2techrep1)
+resLFCshrink <- lfcShrink(dds_LRRK2techrep1, coef="SampleType_G2019S_vs_Control", type="apeglm") # shrinking the log fold change
+head(resLFCshrink)
+```
+
+#MA Plot before and after shrinkage
+```{r}
+plotMA(res_LRRK2techrep1, ylim=c(-4,4)) # plotting the log fold change as per the mean
+plotMA(resLFCshrink, ylim=c(-4,4))
+```
+
+#Creating a data frame with all the results and counts and saving this 
+```{r}
+counts.df <- data.frame(counts_LRRK2) %>%
+  rownames_to_column(var = "geneid") #counts table to merge with the results table
+
+ResultsandCounts.df.DAneuronsD56 <- data.frame(resLFCshrink) %>%
+  rownames_to_column(var = "geneid") %>% 
+  inner_join(counts.df) %>%
+  filter(padj < 0.1) %>%
+  arrange(padj) %>%
+  #arrange(desc(abs(log2FoldChange))) %>% # could also arrange on the basis of the log2foldchange. rowise was in the original code which I removed
+  mutate("sign" = ifelse(log2FoldChange > 0, "upregulated", "downregulated" ))
+ResultsandCounts.df.DAneuronsD56 <- mutate(ResultsandCounts.df.DAneuronsD56, meancounts_control = rowMeans(ResultsandCounts.df.DAneuronsD56[,c(7,9,11,13)]))
+ResultsandCounts.df.DAneuronsD56 <- mutate(ResultsandCounts.df.DAneuronsD56, meancounts_disease = rowMeans(ResultsandCounts.df.DAneuronsD56[,c(8,10,12,14,15)]))
+as_tibble(ResultsandCounts.df.DAneuronsD56)
+head(ResultsandCounts.df.DAneuronsD56)
+
+biomart_export <- read.delim("/Volumes/Seagate Exp/RWM MSc Rotation/biomart_export.txt") 
+
+ResultsandCounts.df.DAneuronsD56 <- ResultsandCounts.df.DAneuronsD56 %>% # by joining to the biomart export file we are assigning gene names and descriptions to the Gene ID for all the differentially expressed genes
+  left_join(biomart_export,
+  by = c('geneid' = 'Gene.stable.ID'))
+
+which(is.na(ResultsandCounts.df.DAneuronsD56), arr.ind=TRUE)
+
+write_csv(ResultsandCounts.df.DAneuronsD56, "/Volumes/Seagate Exp/RWM MSc Rotation/BiogenDAneuronsD56techrep1_DEgenes.csv")  
+head(ResultsandCounts.df.DAneuronsD56)
+
+# to get a list of genes in the analysis that are not filtered by padj <0.1 to use as background for the enrichment analysis
+backgroundresults_unfiltered <- data.frame(resLFCshrink)  %>%
+  rownames_to_column(var = "geneid")
+write_csv(backgroundresults_unfiltered, "/Volumes/Seagate Exp/RWM MSc Rotation/Enrichmentanalysis_gProfiler/BiogenLRRK2fullbackground.csv")
+```
+
+#Making a volcano plot
+```{r}
+#creating the dataframe
+volcanoplot.df.DAneurons <- data.frame(resLFCshrink)#new data frane that is not filtered by the padj values
+volcanoplot.df.DAneurons <- rownames_to_column(volcanoplot.df.DAneurons, "geneid")
+volcanoplot.df.DAneurons <- volcanoplot.df.DAneurons %>% left_join(biomart_export,
+                                      by = c("geneid" = "Gene.stable.ID"))
+threshold <- volcanoplot.df.DAneurons$padj < 0.1 #changed this to 0.1 cut off because the padj value is 0.1
+volcanoplot.df.DAneurons$threshold <- threshold
+volcanoplot.df.DAneurons <- volcanoplot.df.DAneurons[order(volcanoplot.df.DAneurons$padj), ] # ordering by padj values
+
+volcanoplot.df.DAneurons$gene_labels <- "" #creating another column which has empty values "" 
+volcanoplot.df.DAneurons$gene_labels[1:10] <- volcanoplot.df.DAneurons$Gene.name[1:10] # these are the geneIDs with the lowest padj value because they are the first 10 rows in the dataframe
+head(volcanoplot.df.DAneurons)
+
+#making the plot
+ggplot(volcanoplot.df.DAneurons) +
+  geom_point(aes(x=log2FoldChange, y=-log10(padj), colour=threshold)) + #is the log10 adj p value actually log 10 or is it just the adjusted p value- why is it -log 10 rather than just padj value- what is the padj value, should go back and remove the NA values for the means 
+  ggtitle("Differentially expressed genes (Connor-Robson et al. 2019)") +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  geom_vline(xintercept = 0, color="grey") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey") +
+  #geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color="grey") +
+  geom_text_repel(aes(x=log2FoldChange, y=-log10(padj), label = gene_labels), size = rel(2.5)) +
+  coord_cartesian(xlim=c(-7,7)) +
+  theme_classic() +
+  theme(panel.grid = element_blank()) 
+  #theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       # axis.title = element_text(size = rel(1.0))) 
+
+ggplot(volcanoplot.df.DAneurons) +
+  geom_point(aes(x=log2FoldChange, y=-log10(padj), colour=threshold)) + #is the log10 adj p value actually log 10 or is it just the adjusted p value- why is it -log 10 rather than just padj value- what is the padj value, should go back and remove the NA values for the means 
+  ggtitle("Differentially expressed genes\n (Connor-Robson et al. 2019)") +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  geom_vline(xintercept = 0, color="grey") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey") +
+  #geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color="grey") +
+  geom_text_repel(aes(x=log2FoldChange, y=-log10(padj), label = gene_labels), size = rel(2.5)) +
+  coord_cartesian(xlim=c(-7,7)) +
+  theme_classic(14) +
+  theme(panel.grid = element_blank()) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0))) 
+
+#trying to change the axis title-proper graph
+ggplot(volcanoplot.df.DAneurons) +
+  geom_point(aes(x=log2FoldChange, y=-log10(padj), colour=threshold)) + #is the log10 adj p value actually log 10 or is it just the adjusted p value- why is it -log 10 rather than just padj value- what is the padj value, should go back and remove the NA values for the means 
+  ggtitle("Differentially expressed genes\n (Connor-Robson et al. 2019)") +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  geom_vline(xintercept = 0, color="grey") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey") +
+  #geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color="grey") +
+  geom_text_repel(aes(x=log2FoldChange, y=-log10(padj), label = gene_labels), size = 3) +
+  coord_cartesian(xlim=c(-7,7)) +
+  theme_classic(16) +
+  theme(panel.grid = element_blank()) +
+ theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75))) 
+ggsave("/Volumes/Seagate Exp/RWM MSc Rotation/Images/LRRK2_Biogen_Revised/revised_again/VPtestdimensions.png")
+```
+
+#sanity check how many is upregulated vs downregulated because on the volcano plot it looks like more is upregulated
+```{r}
+subset(ResultsandCounts.df.DAneuronsD56, sign == "upregulated")
+subset(ResultsandCounts.df.DAneuronsD56, sign == "downregulated")
+```
+
+# making a plot showing the top 10 DE genes (the ones with the lowest Padj value as labelled on the plot)
+```{r}
+#Making the table
+top10DEgenes.df.DAneuronsD56 <- ResultsandCounts.df.DAneuronsD56[c(1:10), ] %>%
+  dplyr::select(1, 16:19) %>%
+ rename(c(meancounts_control = 'control', meancounts_disease = 'disease')) %>%
+  melt() %>%
+  rename(c(variable = "samplename", value = "normalized_counts"))
+head(top10DEgenes.df.DAneuronsD56)
+
+#Making the plot
+ggplot(top10DEgenes.df.DAneuronsD56) +
+  geom_point(aes(x = samplename, y = normalized_counts, color = Gene.name), position=position_jitter(w=0,h=0)) +
+  geom_line(aes(x = samplename, y = normalized_counts, group = geneid, color = Gene.name), linetype = "dashed") +
+  facet_grid(cols = vars(sign)) +  # link for facets https://www3.nd.edu/~steve/computing_with_data/13_Facets/facets.html
+  scale_y_log10() +
+  xlab("Group") +
+  ylab("Normalized Counts") +
+  ggtitle("Top 10 DE Genes LRRK2 DAneurons Biogen") +
+  theme_bw() +
+  facet_wrap(~sign) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+#creating a counts table for an expression matrix file to use to make the heatmap in cytoscape
+```{r}
+counts_DAneuronsD56techrep1 <- counts(dds_LRRK2techrep1, normalized = T)
+counts_DAneuronsD56techrep1 <- counts_DAneuronsD56techrep1[rownames(counts_DAneuronsD56techrep1) %in% ResultsandCounts.df.DAneuronsD56$geneid,]
+
+
+counts_DAneuronsD56techrep1 <- counts_DAneuronsD56techrep1 %>%
+  as.data.frame() %>%
+  rownames_to_column("geneid") %>%
+  inner_join(biomart_export,
+  by = c("geneid" = "Gene.stable.ID"))
+ counts_DAneuronsD56techrep1 <- counts_DAneuronsD56techrep1[,c(1,11,12,2:10)]
+
+write_csv(counts_DAneuronsD56techrep1, "/Volumes/Seagate Exp/RWM MSc Rotation/Enrichmentanalysis_gprofiler/Heatmap files/counts_Biogen.csv")
+
+```
+
+# Looking at how well genes correlate within this Biogen LRRK2 data set
+```{r}
+#Looking at all the genes in the analysis. We have 16278 genes
+nrow(assay(vsd_LRRK2techrep1))
+
+#There is  3928 DE genes of interest in this Biogen LRRK2 set
+nrow(ResultsandCounts.df.DAneuronsD56)
+
+# We are just interested in the genes that are also DE in the GBA samples. The total number is 275
+GBA_LRRK2Biogen_LRRK2original <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Joined_tables/GBA_LRRK2Biogen_LRRK2original.csv")
+nrow(ResultsandCounts.df.DAneuronsD56[ResultsandCounts.df.DAneuronsD56$geneid %in% GBA_LRRK2Biogen_LRRK2original$geneid,])
+
+#We want to ask whether our differentially expressed genes are coexpressed, so we are going to calculate their correlation to each other
+#We subset our matrix
+df_DEgenes <- assay(vsd_LRRK2techrep1)[rownames(vsd_LRRK2techrep1) %in% GBA_LRRK2Biogen_LRRK2original$geneid,]
+
+#We calculate the correlation of each gene with each other
+deg_cor <- cor(t(df_DEgenes), method = "pearson")
+
+# Changing the format of the deg cor matrix so that it can be plotted as a density plot of the distribution of correlation values in my sample
+as.data.frame(deg_cor) %>%
+  rownames_to_column("GeneA") %>%
+  pivot_longer(-GeneA, names_to = "GeneB", values_to = "Correlation") %>%
+  filter(Correlation <1) %>%
+  #filter(Correlation > 0.5) %>%
+  distinct() %>% # this line is important because we are removing duplicate rows which are coming up because the genes in gene A and sample are swapped. Eg Gene A and Gene B have a correlation of 0.5- this would also be written as Gene B and Gene A have a correlation of 0.5
+    ggplot(aes(x = Correlation)) + #now plotting a genome density plot to look at the distribution of correlation across samples
+  geom_density()
+
+#Making a new data frame that contains the pivot longer version of the table but also has another column which shows the unsigned correlation values as wells as the signed ones
+
+deg_cor_long <- as.data.frame(deg_cor) %>%
+  rownames_to_column("GeneA") %>%
+  pivot_longer(-GeneA, names_to = "GeneB", values_to = "Correlation") %>%
+  filter(Correlation < 1) %>%
+  mutate(unsigned_correlation = abs(Correlation))
+
+#Plotting a heatmap of correlation values?
+deg_cor_long %>%
+  filter(Correlation < -0.8 | Correlation > 0.8) %>%
+ggplot(aes(x = GeneA, y = GeneB, fill = Correlation)) +
+       geom_tile()
+
+
+#Filtering this data set and saving it so it can be inputted into cytoscape to make a network of the highly correlated genes
+deg_cor_long %>% 
+  filter(unsigned_correlation > 0.8) %>%
+write_delim("/Volumes/Seagate Exp/RWM MSc Rotation/correlation_analysis/filtered0.8.txt", delim = "\t")
+
+
+
+#Now lets see what the distribution of correlation values is for a random sample of genes that we measured in our RNA seq experiment. We would expect for a random sample the correlation would follow a normal distribution which would indicate that most of them are not correlated which is what we would expect from a random sample.
+#Create a vector of rownames (genes) randomly selected from our matrix. We want an equal size of random sample as our DEGs tested (275 in this case)
+random_sample <- sample(x = rownames(assay(vsd_LRRK2techrep1)), size = 275, replace = FALSE)
+#We subset our matrix for random genes. The replace = FALSE means that once we pick a "gene from the bag" we do not want it to be put back in.
+deg_subset_random <- assay(vsd_LRRK2techrep1)[rownames(vsd_LRRK2techrep1) %in% random_sample,] #getting the count values for the genes that were pulled out in the variable random_sample on the previous line by running the "sample" function
+#We calculate the correlation of each gene with each other
+deg_cor_random <- cor(t(deg_subset_random), method = "pearson")
+
+#Now let's plot the distribution of our randomly sampled genes' correlation values
+as.data.frame(deg_cor_random) %>%
+  rownames_to_column("GeneA") %>%
+  pivot_longer(-GeneA, names_to = "GeneB", values_to = "Correlation") %>%
+  filter(Correlation < 1) %>%
+  # filter(correlation > 0.5) %>%
+  distinct() %>%
+  ggplot(aes(x = Correlation)) +
+  geom_density()
+
+# Can pick out some well correlated genes and plot their count values on a scatter plot (each point represents one sample)
+df_DEgenes %>%
+  as.data.frame() %>%
+  rownames_to_column("geneid") %>%
+  pivot_longer(-geneid, names_to = "sample", values_to = "count") %>%
+  filter(geneid %in% c("ENSG00000000003", "ENSG00000002549")) %>%
+  pivot_wider(names_from = geneid, values_from = count) %>%
+  #rename("geneA" = "ENSG00000000003", "geneB" = "ENSG00000002549") %>%
+  ggplot(aes(x = ENSG00000000003, y = ENSG00000002549)) +
+  geom_point() +
+  coord_cartesian(xlim = c(8.5,10.5), ylim = c(8.5,10.5)) +
+  stat_cor()
+
+```
+
+
+
+
+
+
+
+
