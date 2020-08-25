@@ -1,0 +1,376 @@
+---
+title: "JoiningTables"
+author: "Tara Diviney"
+date: "6/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+```{r}
+library(plyr)
+library(dplyr)
+library(ggsci)
+library(ggplot2)
+library(reshape2)
+```
+
+# loading the 2 differential expression tables and looking for genes that are in common
+```{r}
+GBADEGenes <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/GBADifferentialExpressedGenes.csv")
+
+LRRK2DEGenes <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2DifferentialExpressedGenes.csv")
+
+LRRK2DEGenes_BiogenDAneuronsD56TR1 <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/BiogenDAneuronsD56techrep1_DEgenes.csv")
+  
+AstrocytesLRRK2DEGenes <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Astrocytes_DEgenes.csv")
+
+SNCA_DEgenes <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/SNCA_DEgenes.csv")
+
+```
+
+#Join the tables 
+```{r}
+#GBA and LRRK2 no Biogen Join
+Joined_GBA_LRRK2 <- GBADEGenes %>%
+  inner_join(LRRK2DEGenes,
+  by = c('geneid' = 'geneid'),
+  suffix = c('_GBA', '_LRRK2'))
+
+# LRRK2 Biogen and no Biogen join
+Joined_LRRK2Biogen_LRRK2 <- LRRK2DEGenes_BiogenDAneuronsD56TR1 %>%
+  inner_join(LRRK2DEGenes,
+  by = c('geneid' = 'geneid'),
+  suffix = c('_BiogenLRRK2', '_LRRK2'))
+
+
+#LRRK2 Biogen and GBA join
+Joined_LRRK2Biogen_GBA <- LRRK2DEGenes_BiogenDAneuronsD56TR1 %>%
+  inner_join(GBADEGenes,
+  by = c('geneid' = 'geneid'),
+  suffix = c('_BiogenLRRK2', '_GBA'))
+
+# Biogen DA neurons and astrocytes join
+Joined_BiogenDAneurons_Astros <- LRRK2DEGenes_BiogenDAneuronsD56TR1 %>%
+  inner_join (AstrocytesLRRK2DEGenes,
+             by = c('geneid' = 'geneid'),
+  suffix = c('_DAneurons', '_astrocytes')) 
+
+#Table combining Biogen and other LRRK2 DE genes with GBA
+Joined_combinedLRRK2analysis_GBA <- Joined_LRRK2Biogen_LRRK2 %>%
+  inner_join (GBADEGenes,
+             by = c('geneid' = 'geneid'),
+  suffix = c('_LRRK2', '_GBA')) 
+colnames(Joined_LRRK2Biogen_GBA)
+
+#full join GBA and Biogen set with other LRRK2 set
+
+Joined_GBA_LRRK2_LRRK2Biogen <- Joined_LRRK2Biogen_GBA %>%
+  full_join(Joined_GBA_LRRK2,
+  by = c('geneid' = 'geneid'),
+  suffix = c('Biogen_common','originalLRRK2_common')) 
+
+Joined_GBA_LRRK2_LRRK2Biogen <- Joined_GBA_LRRK2_LRRK2Biogen[c(-278, -238),c(-33,-34,-47,-48)] #Removing row 278 and row 238 which is the SCUBE2 and ZNF736 gene, respecitvely that does not go in the same direction- restricting analysis to genes that are dysregulated in the same direction. removing the columns containing gene names and gene descriptions that are redundant
+
+Joined_GBA_LRRK2_LRRK2Biogen_filter <- Joined_GBA_LRRK2_LRRK2Biogen %>% 
+  dplyr::select(geneid, Gene.name_BiogenLRRK2, Gene.description_BiogenLRRK2, Gene.name_LRRK2, Gene.description_LRRK2)
+
+
+#SNCA with GBA and Biogen LRRK2 joined
+Joined_SNCA_GBA_LRRK2Biogen <- SNCA_DEgenes %>%
+  inner_join(Joined_LRRK2Biogen_GBA,
+  by = c("geneid" = "geneid"))
+
+#SNCA with GBA
+Joined_SNCA_GBA <- SNCA_DEgenes %>%
+  inner_join (GBADEGenes,
+  by = c("geneid" = "geneid"),
+  suffix = c("_SNCA", "_GBA"))
+
+#SNCA with LRRK2 Biogen
+Joined_SNCA_LRRK2Biogen <- SNCA_DEgenes %>%
+  inner_join (LRRK2DEGenes_BiogenDAneuronsD56TR1,
+  by = c("geneid" = "geneid"),
+  suffix = c("_SNCA", "_LRRK2Biogen"))
+```
+
+#plot scatter plots to look at fold changes of genes in common
+```{r}
+#Joined_GBA_LRRK
+ggplot(Joined_GBA_LRRK2,aes(x = log2FoldChange_GBA, y = log2FoldChange_LRRK2, label = Gene.name_GBA), size = 1) +
+  geom_point() +
+  geom_text_repel() +
+  coord_cartesian(xlim=c(-10,10), ylim = c(-6,6)) +
+  geom_vline(xintercept = 0, color="grey") +
+  geom_hline(yintercept = 0, color="grey") +
+  ggtitle("LRRK2 and GBA DE genes no Biogen")
+
+#LRRK2 Biogen and no Biogen join
+ggplot(Joined_LRRK2Biogen_LRRK2,aes(x = log2FoldChange_BiogenLRRK2, y = log2FoldChange_LRRK2, label = Gene.name_LRRK2), size = 1) +
+  geom_point() +
+  geom_text_repel() +
+  coord_cartesian(xlim=c(-10,10), ylim = c(-6,6)) +
+  geom_vline(xintercept = 0, color="grey") +
+  geom_hline(yintercept = 0, color="grey") +
+  ggtitle("LRRK2 Biogen and no Biogen DE genes")
+
+```
+
+
+
+#Save joined tables
+```{r}
+write_csv (Joined_GBA_LRRK2, "/Volumes/Seagate Exp/RWM MSc Rotation/Joined_tables/CommonGenes_GBALRRK2_noBiogen_18June.csv")
+
+write_csv(Joined_LRRK2Biogen_LRRK2, "/Volumes/Seagate Exp/RWM MSc Rotation/Joined_tables/LRRK2_Biogen_LRRK2.csv")
+
+write_csv(Joined_LRRK2Biogen_GBA, "/Volumes/Seagate Exp/RWM MSc Rotation/Joined_tables/LRRK2_Biogen_GBA.csv")
+
+write_csv(Joined_BiogenDAneurons_Astros, "/Volumes/Seagate Exp/RWM MSc Rotation/Joined_tables/BiogenDAneurons_Astros.csv")
+
+write_csv(Joined_combinedLRRK2analysis_GBA, "/Volumes/Seagate Exp/RWM MSc Rotation/Joined_tables/combinedLRRK2_GBA.csv")
+
+write_csv(Joined_GBA_LRRK2_LRRK2Biogen, "/Volumes/Seagate Exp/RWM MSc Rotation/Joined_tables/GBA_LRRK2Biogen_LRRK2original.csv")
+
+write_csv(Joined_GBA_LRRK2_LRRK2Biogen_filter, "/Volumes/Seagate Exp/RWM MSc Rotation/Joined_tables/GBA_LRRK2Biogen_LRRK2original_filterGeneNamesandDescriptions.csv")
+
+
+```
+
+#plotting histograms
+```{r}
+LRRK2DEGenes_hist <- LRRK2DEGenes %>% dplyr::select(3,15)
+LRRK2DEGenes_BiogenDAneuronsD56TR1_hist <- LRRK2DEGenes_BiogenDAneuronsD56TR1 %>% dplyr::select(3,19)
+join_hist <- LRRK2DEGenes_hist %>% 
+  full_join(LRRK2DEGenes_BiogenDAneuronsD56TR1_hist,
+  by = c('Gene.name' = 'Gene.name'),
+  suffix = c('_LRRK2', '_LRRK2Biogen'))
+
+melted_graph <- melt(join_hist, id.vars = c("Gene.name"))
+
+#without limiting the axis
+melted_graph %>%
+  ggplot(aes(x = value, fill = variable)) +
+  geom_histogram(alpha=0.6, position = 'identity', binwidth = 0.5) +
+  facet_grid(rows = vars(variable)) +
+    scale_fill_manual(values=c("#69b3a2", "#404080")) +
+    labs(fill="") 
+
+#limiting the axis to show the smaller counts better
+melted_graph %>%
+  ggplot(aes(x = value, fill = variable)) +
+  geom_histogram(alpha=0.6, position = 'identity', binwidth = 0.5) +
+  facet_grid(rows = vars(variable)) +
+  coord_cartesian(ylim=c(0,500)) +
+    scale_fill_manual(values=c("#69b3a2", "#404080")) +
+    labs(fill="") 
+
+#just the original LRRK2 set no biogen- why is it grey?
+LRRK2DEGenes_hist %>%
+  ggplot( aes(x=log2FoldChange), color = "blue") +
+    geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity', binwidth = 0.5) +
+    scale_fill_manual(values=c("#69b3a2")) +
+    labs(fill="") 
+  
+```
+
+#Further analysis on the LRRK2 GBA genes in common
+```{r}
+joined_urpegulated <- filter(Joined_LRRK2Biogen_GBA, sign_BiogenLRRK2 == "upregulated" & sign_GBA == "upregulated")
+joined_downregulated <- filter(Joined_LRRK2Biogen_GBA, sign_BiogenLRRK2 == "downregulated" & sign_GBA == "downregulated")
+filter(Joined_LRRK2Biogen_GBA, sign_BiogenLRRK2 == "downregulated" & sign_GBA == "upregulated") 
+filter(Joined_LRRK2Biogen_GBA, sign_BiogenLRRK2 == "upregulated" & sign_GBA == "downregulated") #only gene that goes in different direction is ZNF736- everything else (275 out of 276 are the same direction)
+
+#filtering the amount going in the same direction ofr the 2 LRRK2 sets cause couldnt figure out from looking at the plots. Answer = 15.
+filter(Joined_LRRK2Biogen_LRRK2, sign_BiogenLRRK2 == "upregulated" & sign_LRRK2 == "upregulated")
+filter(Joined_LRRK2Biogen_LRRK2, sign_BiogenLRRK2 == "downregulated" & sign_LRRK2 == "downregulated")
+
+
+# arranging by average LFC value
+GBA_LRRK2_DEgenesSameDirection <- rbind(joined_urpegulated, joined_downregulated) 
+GBA_LRRK2_DEgenesSameDirection <-  mutate(GBA_LRRK2_DEgenesSameDirection, avgLog2FoldChange = ((log2FoldChange_BiogenLRRK2 + log2FoldChange_GBA)/2)) %>%
+  arrange(desc(abs(avgLog2FoldChange)))
+
+write_csv(GBA_LRRK2_DEgenesSameDirection, "/Volumes/Seagate Exp/RWM MSc Rotation/Joined_tables/GBA_LRRK2Biogen_filtered_and_arranged.csv")
+
+histogram_plot <- GBA_LRRK2_DEgenesSameDirection %>%
+  full_join(Joined_GBA_LRRK2,
+  by = c("geneid" = "geneid")) %>%
+  dplyr::select()
+
+```
+
+#graphing LFC values joined GBA and LRRK2Biogen
+```{r}
+#scatter plot
+ggplot(GBA_LRRK2_DEgenesSameDirection,aes(x = log2FoldChange_BiogenLRRK2, y = log2FoldChange_GBA, label = ifelse(avgLog2FoldChange >3.048 | avgLog2FoldChange < -2.04, Gene.name_GBA, "")), size = 1) +
+  geom_point(color = "#69b3a2") +
+  geom_label_repel() +
+  theme_classic() +
+  xlab("Log2FoldChange LRRK2 (Connor-Robson et al. 2019)") +
+  ylab("Log2FoldChange GBA") +
+  coord_cartesian(xlim=c(-4,4)) +
+  geom_vline(xintercept = 0, color="grey") +
+  geom_hline(yintercept = 0, color="grey") +
+  ggtitle("Log fold change values of common differentially expressed genes")
+
+#scatter plot new
+ggplot(GBA_LRRK2_DEgenesSameDirection,aes(x = log2FoldChange_BiogenLRRK2, y = log2FoldChange_GBA, label = ifelse(avgLog2FoldChange >3.048 | avgLog2FoldChange < -2.04, Gene.name_GBA, "")), size = 1) +
+  geom_point(color = "#69b3a2") +
+  geom_label_repel(size = 4) +
+  theme_classic(16) +
+  theme(panel.grid = element_blank()) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75))) +
+  xlab("Log2FoldChange LRRK2 (Connor-Robson et al. 2019)") +
+  ylab("Log2FoldChange GBA") +
+  coord_cartesian(xlim=c(-4,4)) +
+  geom_vline(xintercept = 0, color="grey") +
+  geom_hline(yintercept = 0, color="grey") +
+  ggtitle("Log2 fold change values\n of common differentially expressed genes")
+#originally it was geom_point(aes(color = meancounts_disease_GBA)) but I took this out because it wasn't working because the counts weren't vsd transformed and now I am not too worried about this 
+
+
+topDEgenes_combined.df <- GBA_LRRK2_DEgenesSameDirection %>%
+  filter(avgLog2FoldChange >3.048 | avgLog2FoldChange < -2.04) %>%
+  dplyr::select(1, 16:19) 
+topDEgenes_combined.df <- dplyr::rename(topDEgenes_combined.df, Gene.name=Gene.name_BiogenLRRK2, PD = meancounts_disease_BiogenLRRK2, Control = meancounts_control_BiogenLRRK2)
+ #dplyr::rename(c("control" = meancounts_controlBiogenLRRK2, "disease" =  meancounts_diseaseBiogenLRRK2)) %>%
+ topDEgenes_combined.df <- topDEgenes_combined.df %>% melt() #%>%
+  #dplyr::rename(c(variable = "samplename", value = "normalized_counts"))
+
+
+#Making the plot with bigger labels
+ggplot(topDEgenes_combined.df[-c(6,20,4,18, 12,26, 10,24),]) +
+  geom_point(aes(x = variable, y = value, color = Gene.name), position=position_jitter(w=0,h=0)) +
+  geom_line(aes(x = variable, y = value, group = geneid, color = Gene.name), linetype = "dashed") +
+  facet_grid(cols = vars(sign_BiogenLRRK2)) +  # link for facets https://www3.nd.edu/~steve/computing_with_data/13_Facets/facets.html
+  scale_y_log10() +
+  scale_color_d3() +
+  xlab("Group") +
+  ylab("Mean untransformed counts") +
+  ggtitle("Change in gene counts for\n top differentially expressed genes") +
+  scale_color_d3() +
+  theme_bw(16) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75))) +
+  facet_wrap(~sign_BiogenLRRK2) 
+  #theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  #theme(plot.title=element_text(hjust=0.5))
+
+#old plot 
+ggplot(topDEgenes_combined.df[-c(6,20,4,18, 12,26, 10,24),]) +
+  geom_point(aes(x = variable, y = value, color = Gene.name), position=position_jitter(w=0,h=0)) +
+  geom_line(aes(x = variable, y = value, group = geneid, color = Gene.name), linetype = "dashed") +
+  facet_grid(cols = vars(sign_BiogenLRRK2)) +  # link for facets https://www3.nd.edu/~steve/computing_with_data/13_Facets/facets.html
+  scale_y_log10() +
+  scale_color_d3() +
+  xlab("Group") +
+  ylab("Mean untransformed counts") +
+  ggtitle("Change in gene counts for top differentially expressed genes") +
+  scale_color_d3() +
+  theme_bw() +
+  facet_wrap(~sign_BiogenLRRK2) 
+
+
+
+
+##
+
+#histogram
+GBA_LRRK2_DEgenesSameDirection %>%
+  dplyr::select(log2FoldChange_BiogenLRRK2, log2FoldChange_GBA, Gene.name_GBA) %>%
+  melt() %>%
+  ggplot(aes(x = value, fill = variable)) +
+  geom_histogram(alpha=0.6, position = 'identity', binwidth = 0.5) +
+  facet_grid(rows = vars(variable)) +
+  scale_fill_manual(values=c("#69b3a2", "#404080"))
+
+#could the lower log fold change values in the GBA set be attributed to lower counts? comparing the mean cuounts of the control samples for gba and lrrk2 
+GBA_LRRK2_DEgenesSameDirection %>%
+  dplyr::select(meancounts_control_BiogenLRRK2, meancounts_control_GBA, Gene.name_GBA) %>%
+  melt() %>%
+  ggplot(aes(x = value, fill = variable)) +
+  geom_histogram(alpha=0.6, position = 'identity', binwidth = 25) +
+  facet_grid(rows = vars(variable)) +
+  scale_fill_manual(values=c("#69b3a2", "#404080")) +
+  coord_cartesian(xlim =c(0,4000))
+
+GBA_LRRK2_DEgenesSameDirection %>%
+  dplyr::select(meancounts_disease_BiogenLRRK2, meancounts_disease_GBA, Gene.name_GBA) %>%
+  melt() %>%
+  ggplot(aes(x = value, fill = variable)) +
+  geom_histogram(alpha=0.6, position = 'identity', binwidth = 20) +
+  facet_grid(rows = vars(variable)) +
+  scale_fill_manual(values=c("#69b3a2", "#404080")) +
+  coord_cartesian(xlim =c(0,4000))
+
+LFC_GBA0 <- GBA_LRRK2_DEgenesSameDirection %>%
+  subset(log2FoldChange_GBA > -0.5 & log2FoldChange_GBA < 0.5)
+
+
+```
+
+#Making histogram for the raw LFC values in each dataset separately
+```{r}
+GBADEGenes_hist <- GBADEGenes %>% dplyr::select(Gene.name, log2FoldChange) 
+GBADEGenes_hist$log2FoldChange_GBA <- GBADEGenes_hist$log2FoldChange
+GBADEGenes_hist <- GBADEGenes_hist %>% dplyr::select(Gene.name, log2FoldChange_GBA) 
+
+rawLFC_histogram <- LRRK2DEGenes_hist %>%
+  full_join(LRRK2DEGenes_BiogenDAneuronsD56TR1_hist,
+  by = c("Gene.name" = "Gene.name"),
+  suffix = c("noBiogen", "Biogen"))
+
+rawLFC_histogram <- rawLFC_histogram %>%
+  full_join(GBADEGenes_hist,
+  by = c("Gene.name" = "Gene.name")) 
+
+rawLFC_histogram <- rawLFC_histogram[,c(2,1,3,4)] 
+rawLFC_histogram <- rawLFC_histogram %>% pivot_longer(log2FoldChangenoBiogen:log2FoldChange_GBA, names_to = "log2FoldChange", values_to = "counts")
+
+ ggplot(rawLFC_histogram, aes(x = counts, fill = log2FoldChange)) +
+  geom_histogram () + #(alpha=0.6, position = 'identity', binwidth = 20) +
+  facet_grid(cols = vars(log2FoldChange)) 
+  #scale_fill_manual(values=c("#69b3a2", "#404080")
+   
+ggplot(GBADEGenes_hist, aes(x = log2FoldChange_GBA)) +
+   geom_histogram(fill = "#CCFFCC", color = "#33CC00") +
+    ggtitle("Distribution of log2 fold change values GBA\n (Lang et al. 2019)") +
+  xlab("log2 Fold Change") +
+   theme_classic(16) +
+  theme(panel.grid = element_blank()) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.25)),
+       axis.text = element_text(size = rel(1.0))) 
+            
+ggplot(LRRK2DEGenes_hist, aes(x = log2FoldChange)) +
+   geom_histogram(fill = "#CCCFFF", color = "#CC99FF") +
+  xlab("log2 Fold Change") +
+  ggtitle("Distribution of log2 fold change values\n LRRK2 (Sandor et al. 2017)") +
+  theme(panel.grid = element_blank()) +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.25)),
+       axis.text = element_text(size = rel(1.0))) 
+
+ggplot(LRRK2DEGenes_BiogenDAneuronsD56TR1_hist, aes(x = log2FoldChange)) +
+  geom_histogram(fill = "#FFCC99", color = "#FF9900") +
+  xlab("log2 Fold Change") +
+  ggtitle("Distribution of log2 fold change values\n LRRK2 (Connor-Robson et al. 2019)") +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.25)),
+       axis.text = element_text(size = rel(1.0))) 
+
+
+```
+
