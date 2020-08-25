@@ -1,0 +1,210 @@
+---
+title: "Sandor_PCA"
+author: "Tara Diviney"
+date: "8/25/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+# load libraries
+```{r}
+library(dplyr)
+library(DESeq2)
+library(GenomicFeatures)
+library(tximport)
+library(rhdf5)
+library(ggplot2)
+library("readr")
+library("tximportData")
+library(apeglm)
+library(tidyverse)
+library(reshape2)
+library(ggrepel)
+library(reshape2)
+```
+
+# Import files to make dds object. 
+Removing the second row in metadata table to only include one OX199 patient. Removed 2nd not first to match order in table 1 in Sandor paper and to match the files folder name
+```{r}
+sample_metadata <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/metadata_lrrk2_gba.csv") #load sample metadata file
+metadata_LRRK2 <- sample_metadata[c(1,3:6),c(1:16)]
+
+tx2gene <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/tx2gene.csv") 
+paste("The tx2gene table contains ", length(tx2gene$TXNAME), " entries.", sep = "")
+
+files_LRRK2_repeatremoved <- file.path("/Volumes/Seagate\ Exp/RWM\ MSc\ Rotation/Kallisto/LRRK2_trimmed_DeSeq2_repeatremoved", metadata_LRRK2$folder, "abundance.h5") # create a list of kallisto files 
+
+names(files_LRRK2_repeatremoved) <- metadata_LRRK2$sample_name #adds another column to the files table that labels the files according to the sample from which they came
+
+txi_LRRK2 <- tximport(files_LRRK2_repeatremoved, type = "kallisto", tx2gene = tx2gene, ignoreTxVersion = T)
+```
+
+## running DeSeq2 first using a design ~ 1 for the PCA plot (using the vsd values)
+```{r}
+dds_LRRK2 <- DESeqDataSetFromTximport(txi_LRRK2, colData = metadata_LRRK2, design = ~ 1)
+
+dds_LRRK2 <- DESeq(dds_LRRK2, minReplicatesForReplace = Inf) 
+min_counts <- 10
+keep_feature <- rowMeans(counts(dds_LRRK2)) >= min_counts 
+dds_LRRK2 <- dds_LRRK2[keep_feature, ]
+
+vsd <- vst(dds_LRRK2, blind = FALSE)
+```
+
+
+# plotting the PCA plot (design ~ 1)
+```{r}
+counts_vsd_LRRK2 <- assay(vsd)
+pca_vsd_LRRK2 <- prcomp(t(counts_vsd_LRRK2), scale=TRUE)
+
+## make a scree plot to investigate how much variation in the data each principle component accounts for 
+pca_vsd_LRRK2.var <- pca_vsd_LRRK2$sdev^2 # calculating the square standard deviation of each principle component
+pca_vsd_LRRK2.var.per <- round(pca_vsd_LRRK2.var/sum(pca_vsd_LRRK2.var)*100, 1) #converting to a percentage to account for the percentage variation
+
+barplot(pca_vsd_LRRK2.var.per, main="Scree Plot LRRK2", xlab="Principal Component", ylab="Percent Variation", col = "#CC99FF", fill = "#CCCFFF")
+ 
+#making scree plot ggplot
+pca_vsd_LRRK2.var.per.df <- pca_vsd_LRRK2.var.per %>%
+  as.data.frame()
+pca_vsd_LRRK2.var.per.df$Principal_component <- c("PC1", "PC2", "PC3", "PC4", "PC5")
+pca_vsd_LRRK2.var.per.df$Percent_Variation <- pca_vsd_LRRK2.var.per.df$.
+pca_vsd_LRRK2.var.per.df <- pca_vsd_LRRK2.var.per.df[,2:3] 
+
+ggplot(pca_vsd_LRRK2.var.per.df, aes(x = Principal_component, y = Percent_Variation)) +
+  geom_bar(stat='identity', color = "#CC99FF", fill = "#CCCFFF") +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+   xlab("Principal component") +
+  ylab("Percent Variation") +
+  ggtitle("Scree Plot LRRK2\n (Sandor et al. 2017)")
+
+
+# make PCA plot with ggplot
+pca_vsd_LRRK2.data <- data.frame(Sample=rownames(pca_vsd_LRRK2$x),
+                                               PC1=pca_vsd_LRRK2$x[,1],
+                                               PC2=pca_vsd_LRRK2$x[,2],
+                                               PC3=pca_vsd_LRRK2$x[,3],
+                                               PC4=pca_vsd_LRRK2$x[,4])
+pca_vsd_LRRK2.data$mutation <- metadata_LRRK2$disease
+pca_vsd_LRRK2.data$experiment <- metadata_LRRK2$experiment
+pca_vsd_LRRK2.data$individual <- metadata_LRRK2$individual
+pca_vsd_LRRK2.data$gender <- metadata_LRRK2$gender
+pca_vsd_LRRK2.data$age_bin <- metadata_LRRK2$age_bin
+
+combined.df <- pca_vsd_LRRK2.data %>%
+  pivot_longer(cols = PC1:PC4, names_to = 'PC', values_to = 'x') 
+
+
+ggplot(combined.df, aes(x = PC, y = x, color = mutation, shape = gender)) +
+  geom_point(size = 5) +
+  xlab("Principal Component") +
+  ylab("Component Coordinate") +
+  theme_classic(16) +
+   theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  ggtitle("Variation across Principal Components\n LRRK2 (Sandor et al. 2017)")
+
+#Make pca bi-plots
+ggplot(data=pca_vsd_LRRK2.data, aes(x=PC1, y=PC3, label=Sample)) +
+  geom_point(size =5) +
+  geom_label_repel(size=5) +
+  xlab(paste("PC1 - ", pca_vsd_LRRK2.var.per[1], "%", sep="")) +
+  ylab(paste("PC3 - ", pca_vsd_LRRK2.var.per[3], "%", sep="")) +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  ggtitle("PCA LRRK2 (Sandor et al. 2017)")
+
+
+ggplot(data=pca_vsd_LRRK2.data, aes(x=PC1, y=PC3)) +
+  geom_point(aes(color = mutation, shape = gender), size=5) +
+  xlab(paste("PC1 - ", pca_vsd_LRRK2.var.per[1], "%", sep="")) +
+  ylab(paste("PC3 - ", pca_vsd_LRRK2.var.per[3], "%", sep="")) +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(2), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  ggtitle("PCA LRRK2 (Sandor et al. 2017)")
+
+```
+
+#other PCA graphs not included in report
+
+```{r}
+ggplot(data=pca_vsd_LRRK2.data, aes(x=PC1, y=PC2, label=Sample)) +
+  geom_text() +
+  xlab(paste("PC1 - ", pca_vsd_LRRK2.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_LRRK2.var.per[2], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA LRRK2 (VST)")
+
+ggplot(data=pca_vsd_LRRK2.data, aes(x=PC1, y=PC2)) +
+  geom_point(aes(color = mutation, shape = gender), size=3) +
+  xlab(paste("PC1 - ", pca_vsd_LRRK2.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_LRRK2.var.per[2], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA LRRK2 (VST) 2")
+
+ggplot(data=pca_vsd_LRRK2.data, aes(x=PC1, y=PC3, label=Sample)) +
+  geom_label_repel() +
+  geom_point() +
+  xlab(paste("PC1 - ", pca_vsd_LRRK2.var.per[1], "%", sep="")) +
+  ylab(paste("PC3 - ", pca_vsd_LRRK2.var.per[3], "%", sep="")) +
+  theme_classic() +
+  ggtitle("PCA LRRK2 (Sandor et al. 2017)")
+
+ggplot(data=pca_vsd_LRRK2.data, aes(x=PC1, y=PC3)) +
+  geom_point(aes(color = mutation, shape = gender), size=3) +
+  xlab(paste("PC1 - ", pca_vsd_LRRK2.var.per[1], "%", sep="")) +
+  ylab(paste("PC3 - ", pca_vsd_LRRK2.var.per[3], "%", sep="")) +
+  theme_classic() +
+  ggtitle("PCA LRRK2 (Sandor et al. 2017)")
+
+
+ggplot(data=pca_vsd_LRRK2.data, aes(x=PC2, y=PC3)) +
+  geom_point(aes(color = mutation, shape = gender), size=3) +
+  xlab(paste("PC2 - ", pca_vsd_LRRK2.var.per[2], "%", sep="")) +
+  ylab(paste("PC3 - ", pca_vsd_LRRK2.var.per[3], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA LRRK2 (VST) 3")
+
+ggplot(data=pca_vsd_LRRK2.data, aes(x=PC2, y=PC3, label=Sample)) +
+  geom_text() +
+  xlab(paste("PC2 - ", pca_vsd_LRRK2.var.per[2], "%", sep="")) +
+  ylab(paste("PC3 - ", pca_vsd_LRRK2.var.per[3], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA LRRK2 (VST)")
+
+ggplot(data=pca_vsd_LRRK2.data, aes(x=PC3, y=PC4)) +
+  geom_point(aes(color = mutation, shape = gender), size=3) +
+  xlab(paste("PC3 - ", pca_vsd_LRRK2.var.per[3], "%", sep="")) +
+  ylab(paste("PC4 - ", pca_vsd_LRRK2.var.per[4], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA LRRK2 (VST) 4")
+
+ggplot(data=pca_vsd_LRRK2.data, aes(x=PC2, y=PC4)) +
+  geom_point(aes(color = mutation, shape = gender), size=3) +
+  xlab(paste("PC2 - ", pca_vsd_LRRK2.var.per[2], "%", sep="")) +
+  ylab(paste("PC4 - ", pca_vsd_LRRK2.var.per[4], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA LRRK2 (VST) 5")
+
+## get the name of the top 10 measurements (genes) that contribute most to pc1.
+loading_scores_LRRK2 <- pca_vsd_LRRK2$rotation[,1] # what does the rotation mean- what is the difference between the rotation and the principle component?
+gene_scores_LRRK2 <- abs(loading_scores_LRRK2) ## get the magnitudes the absolute functions sorts on the objects absolute magnitudes from high to low we want positive and negative values ie we dont want the negative values at the bottom of the list. Because the negative values shift it to the left and the positive values shift it to the right
+gene_scores_ranked <- sort(gene_scores_LRRK2, decreasing=TRUE)
+top_10_genesLRRK2 <- names(gene_scores_ranked[1:10]) ## show the names of the top 10 genes
+top_10_genesLRRK2 
+
+```
