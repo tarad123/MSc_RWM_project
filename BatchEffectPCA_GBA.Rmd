@@ -1,0 +1,93 @@
+---
+title: "Investigating GBA Batch effects PCA"
+author: "Tara Diviney"
+date: "8/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+```{r}
+
+sample_metadata <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/metadata_lrrk2_gba.csv") #load sample metadata file
+sample_metadata_GBA_all <- sample_metadata[c(9:19),c(1:16)] # subset sample metadata file
+
+GTFfile <- "/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/homo_sapiens/Homo_sapiens.GRCh38.96.gtf" #load the transcript gtf file
+tx2gene <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/tx2gene.csv")
+paste("The tx2gene table contains ", length(tx2gene$TXNAME), " entries.", sep = "")
+
+files_GBA_all <- file.path("/Volumes/Seagate\ Exp/RWM\ MSc\ Rotation/Kallisto/GBA_All_PCA", sample_metadata_GBA_all$folder, "abundance.h5") # create a list of kallisto files 
+names(files_GBA_all) <- sample_metadata_GBA_all$sample_name #adds another column to the files table that labels the files according to the sample from which they came
+
+txi_GBA_all <- tximport(files_GBA_all, type = "kallisto", tx2gene = tx2gene, ignoreTxVersion = T)
+
+dds <- DESeqDataSetFromTximport(txi_GBA_all, colData = sample_metadata_GBA_all, design = ~1)
+
+min_counts <- 10
+keep_feature <- rowMeans(counts(dds)) >= min_counts 
+dds_removed <- dds[!keep_feature, ]
+dds <- dds[keep_feature, ]
+dds <- DESeq(dds, minReplicatesForReplace = Inf) 
+
+counts_GBA_all <- counts(dds, normalized = T)
+vsd_GBA_all <- vst(dds, blind = FALSE)
+```
+
+#pca
+```{r}
+counts_GBA_all <- assay(vsd_GBA_all)
+pca_vsd_GBA_all <- prcomp(t(counts_GBA_all), scale=TRUE)
+
+pca_vsd_GBA_all.var <- pca_vsd_GBA_all$sdev^2 # calculating the square standard deviation of each principle component
+pca_vsd_GBA_all.var.per <- round(pca_vsd_GBA_all.var/sum(pca_vsd_GBA_all.var)*100, 1) #converting to a percentage to account for the percentage variation
+
+barplot(pca_vsd_GBA_all.var.per, main="Scree Plot GBA", xlab="Principal Component", ylab="Percent Variation")
+
+pca_vsd_GBA_all.data <- data.frame(Sample=rownames(pca_vsd_GBA_all$x),
+                                PC1=pca_vsd_GBA_all$x[,1],
+                                PC2=pca_vsd_GBA_all$x[,2],
+                                PC3=pca_vsd_GBA_all$x[,3],
+                                PC4=pca_vsd_GBA_all$x[,4],
+                                PC5=pca_vsd_GBA_all$x[,5])
+                                      
+pca_vsd_GBA_all.data$SampleName <- sample_metadata_GBA_all$sample_name
+pca_vsd_GBA_all.data$mutation <- sample_metadata_GBA_all$disease
+pca_vsd_GBA_all.data$batch <- c("Batch 2", "Batch 1", "Batch 2", "Batch 1", "Batch 2", "Batch 1", "Batch 2", "Batch 1", "Batch 2", "Batch 1", "Batch 2")
+
+ggplot(data=pca_vsd_GBA_all.data, aes(x=PC1, y=PC2, color = batch, shape = mutation, label = SampleName)) +
+  geom_point() +
+  geom_label_repel() +
+  xlab(paste("PC1 - ", pca_vsd_GBA_all.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_GBA_all.var.per[2], "%", sep="")) +
+  theme_classic() +
+  ggtitle("PCA GBA Lang et al. 2019")
+
+ggplot(data=pca_vsd_GBA_all.data, aes(x=PC1, y=PC2, color = batch, shape = mutation, label = SampleName)) +
+  geom_point(size = 3) +
+  geom_label_repel() +
+  xlab(paste("PC1 - ", pca_vsd_GBA_all.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_GBA_all.var.per[2], "%", sep="")) +
+  theme_classic() +
+  ggtitle("PCA GBA (Lang et al. 2019)", subtitle = "Samples separate according to batch")
+
+ggplot(data=pca_vsd_GBA_all.data, aes(x=PC1, y=PC2, color = batch, shape = mutation)) +
+  geom_point(size = 3) +
+  xlab(paste("PC1 - ", pca_vsd_GBA_all.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_GBA_all.var.per[2], "%", sep="")) +
+  theme_classic() +
+  ggtitle("PCA GBA (Lang et al. 2019)", subtitle = "Samples separate according to batch")
+
+```
+
