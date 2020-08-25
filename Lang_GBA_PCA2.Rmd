@@ -1,0 +1,182 @@
+---
+title: "GBA_PCA_Plots"
+author: "Tara Diviney"
+date: "8/25/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+## Importing libraries 
+```{r}
+library(dplyr)
+library(DESeq2)
+library(GenomicFeatures)
+library(tximport)
+library(rhdf5)
+library(ggplot2)
+library("readr")
+library("tximportData")
+library(apeglm)
+library(tidyverse)
+library(reshape2)
+library(ggrepel)
+library(readr)
+
+```
+
+#Importing files to make the dds object
+```{r}
+GTFfile <- "/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/homo_sapiens/Homo_sapiens.GRCh38.96.gtf" #load the transcript gtf file
+tx2gene <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/tx2gene.csv")
+paste("The tx2gene table contains ", length(tx2gene$TXNAME), " entries.", sep = "")
+
+sample_metadata_GBA_1_noPSP <- read_csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/sample_metadata_GBA_1_noPSP.csv")
+sample_metadata_GBA_1_noPSP$name <- c("Control_1", "Control_2", "GBA_1", "GBA_2")
+
+files_GBA_noPSP <- file.path("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/GBA_Batch2_untrimmed_DeSeq2_noPSP", sample_metadata_GBA_1_noPSP$folder, "abundance.h5") # create a list of kallisto files 
+names(files_GBA_noPSP) <- sample_metadata_GBA_1_noPSP$sample_name #adds another column to the files table that labels the files according to the sample from which they came
+
+txi_GBA_1_noPSP <- tximport(files_GBA_noPSP, type = "kallisto", tx2gene = tx2gene, ignoreTxVersion = T)
+```
+
+# first using a design ~ 1 for the PCA plot (using the vsd values)
+```{r}
+dds <- DESeqDataSetFromTximport(txi_GBA_1_noPSP, colData = sample_metadata_GBA_1_noPSP, design = ~1)
+
+dds <- DESeq(dds, minReplicatesForReplace = Inf) #filtering the counts
+min_counts <- 10
+keep_feature <- rowMeans(counts(dds)) >= min_counts 
+dds_removed <- dds[!keep_feature, ]
+dds <- dds[keep_feature, ]
+
+dds <- DESeq(dds, minReplicatesForReplace = Inf) # why do we run this line of code
+
+vsd <- vst(dds, blind = FALSE) # doing this with design ~1 because thats what we did before but if I said blind = TRUE then it wouldnt matter what the design was for the vsd and the appearance of the plots wouldnt be affected? 
+
+```
+
+# plotting the PCA plot (design ~ 1)
+```{r}
+counts_vsd <- assay(vsd) #creating counts table
+pca_vsd_GBA_1 <- prcomp(t(counts_vsd), scale=TRUE)
+
+## make a scree plot to investigate how much variation in the data each principle component accounts for 
+pca_vsd_GBA_1.var <- pca_vsd_GBA_1$sdev^2 # calculating the square standard deviation of each principle component
+pca_vsd_GBA_1.var.per <- round(pca_vsd_GBA_1.var/sum(pca_vsd_GBA_1.var)*100, 1) #converting to a percentage to account for the percentage variation
+
+barplot(pca_vsd_GBA_1.var.per, main="Scree Plot GBA", xlab="Principal Component", ylab="Percent Variation")
+
+#making a scree plot with ggplot
+pca_vsd_GBA_1.var.per.df <- pca_vsd_GBA_1.var.per %>%
+  as.data.frame()
+pca_vsd_GBA_1.var.per.df$Principal_component <- c("PC1", "PC2", "PC3", "PC4")
+pca_vsd_GBA_1.var.per.df$Percent_Variation <- pca_vsd_GBA_1.var.per.df$.
+pca_vsd_GBA_1.var.per.df <- pca_vsd_GBA_1.var.per.df[,2:3] 
+
+ggplot(pca_vsd_GBA_1.var.per.df, aes(x = Principal_component, y = Percent_Variation)) +
+  geom_bar(stat='identity', fill = "#CCFFCC", color = "#33CC00") +
+  theme_classic(16) +
+theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+   xlab("Principal component") +
+  ylab("Percent Variation") +
+  ggtitle("Scree Plot GBA\n (Lang et al. 2019)")
+
+# make PCA plot with ggplot
+pca_vsd_GBA_1.data <- data.frame(Sample=rownames(pca_vsd_GBA_1$x),
+                                               PC1=pca_vsd_GBA_1$x[,1],
+                                               PC2=pca_vsd_GBA_1$x[,2],
+                                               PC3=pca_vsd_GBA_1$x[,3])
+pca_vsd_GBA_1.data$disease <- sample_metadata_GBA_1_noPSP$disease
+pca_vsd_GBA_1.data$experiment <- sample_metadata_GBA_1_noPSP$experiment
+pca_vsd_GBA_1.data$individual <- sample_metadata_GBA_1_noPSP$individual
+pca_vsd_GBA_1.data$gender <- sample_metadata_GBA_1_noPSP$gender
+pca_vsd_GBA_1.data$age_bin <- sample_metadata_GBA_1_noPSP$age_bin
+pca_vsd_GBA_1.data$name <- sample_metadata_GBA_1_noPSP$name
+
+combinedpcas.df <- pca_vsd_GBA_1.data %>%
+  pivot_longer(cols = PC1:PC3, names_to = 'PC', values_to = 'x') %>%
+  dplyr::select(Sample, disease, individual, age_bin, gender, PC, x)
+
+ggplot(combinedpcas.df, aes(x = PC, y = x, color = disease, shape = gender)) +
+  geom_point(size =5) +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  xlab("Principal Component") +
+  ylab("Component Coordinate") +
+  ggtitle("Variation across Principal Components GBA\n (Lang et al. 2019)")
+
+#make PCA bi-plots
+ggplot(data=pca_vsd_GBA_1.data, aes(x=PC1, y=PC2, label=name)) +
+  geom_label_repel(size =5) +
+  geom_point(size =5) +
+  xlab(paste("PC1 - ", pca_vsd_GBA_1.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_GBA_1.var.per[2], "%", sep="")) +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(2), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  ggtitle("PCA GBA (Lang et al. 2019)")
+
+ggplot(data=pca_vsd_GBA_1.data, aes(x=PC1, y=PC2)) +
+  geom_point(aes(color=disease, shape=gender), size=5) +
+  xlab(paste("PC1 - ", pca_vsd_GBA_1.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_GBA_1.var.per[2], "%", sep="")) +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(2), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  ggtitle("PCA GBA (Lang et al. 2019)")
+
+```
+
+#other PCs and graphs not included in final report
+```{r}
+#make the graph
+ggplot(data=pca_vsd_GBA_1.data, aes(x=PC1, y=PC2, label=name)) +
+  geom_label_repel() +
+  geom_point() +
+  xlab(paste("PC1 - ", pca_vsd_GBA_1.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_GBA_1.var.per[2], "%", sep="")) +
+  theme_classic() +
+  ggtitle("PCA GBA (Lang et al. 2019)")
+
+ggplot(data=pca_vsd_GBA_1.data, aes(x=PC1, y=PC2)) +
+  geom_point(aes(color=disease, shape=gender), size=3) +
+  xlab(paste("PC1 - ", pca_vsd_GBA_1.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_GBA_1.var.per[2], "%", sep="")) +
+  theme_classic() +
+  ggtitle("PCA GBA (Lang et al. 2019)")
+
+ggplot(data=pca_vsd_GBA_1.data, aes(x=PC1, y=PC3)) +
+  geom_point(aes(color=disease, shape=gender), size=3) +
+  xlab(paste("PC1 - ", pca_vsd_GBA_1.var.per[1], "%", sep="")) +
+  ylab(paste("PC3 - ", pca_vsd_GBA_1.var.per[3], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA GBA_1 (VST) 3")
+
+ggplot(data=pca_vsd_GBA_1.data, aes(x=PC2, y=PC3)) +
+  geom_point(aes(color=disease, shape=gender), size=3) +
+  xlab(paste("PC2 - ", pca_vsd_GBA_1.var.per[2], "%", sep="")) +
+  ylab(paste("PC3 - ", pca_vsd_GBA_1.var.per[3], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA GBA_1 (VST) 4")
+
+## get the name of the top 10 measurements (genes) that contribute most to pc1.
+loading_scores <- pca_vsd_GBA_1$rotation[,1] # what does the rotation mean- what is the difference between the rotation and the principle component?
+gene_scores <- abs(loading_scores) ## get the magnitudes the absolute functions sorts on the objects absolute magnitudes from high to low we want positive and negative values ie we dont want the negative values at the bottom of the list. Because the negative values shift it to the left and the positive values shift it to the right
+gene_score_ranked <- sort(gene_scores, decreasing=TRUE)
+top_10_genes <- names(gene_score_ranked[1:10]) ## show the names of the top 10 genes
+top_10_genes #go back to this gene score ranked
+
+```
