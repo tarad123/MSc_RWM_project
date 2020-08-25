@@ -1,0 +1,230 @@
+---
+title: "Lang_GBA_DEgenes"
+author: "Tara Diviney"
+date: "8/25/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+## Importing libraries 
+```{r}
+library(dplyr)
+library(DESeq2)
+library(GenomicFeatures)
+library(tximport)
+library(rhdf5)
+library(ggplot2)
+library("readr")
+library("tximportData")
+library(apeglm)
+library(tidyverse)
+library(reshape2)
+library(ggrepel)
+library(readr)
+library(ggsci)
+library(vsn)
+```
+
+
+#Importing files to make the dds object
+```{r}
+GTFfile <- "/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/homo_sapiens/Homo_sapiens.GRCh38.96.gtf" #load the transcript gtf file
+tx2gene <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/tx2gene.csv")
+paste("The tx2gene table contains ", length(tx2gene$TXNAME), " entries.", sep = "")
+
+sample_metadata_GBA_1_noPSP <- read_csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/sample_metadata_GBA_1_noPSP.csv")
+sample_metadata_GBA_1_noPSP$name <- c("Control_1", "Control_2", "GBA_1", "GBA_2")
+
+files_GBA_noPSP <- file.path("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/GBA_Batch2_untrimmed_DeSeq2_noPSP", sample_metadata_GBA_1_noPSP$folder, "abundance.h5") # create a list of kallisto files 
+names(files_GBA_noPSP) <- sample_metadata_GBA_1_noPSP$sample_name #adds another column to the files table that labels the files according to the sample from which they came
+
+txi_GBA_1_noPSP <- tximport(files_GBA_noPSP, type = "kallisto", tx2gene = tx2gene, ignoreTxVersion = T)
+```
+
+# creating dds object with design ~ disease 
+```{r}
+dds_disease <- DESeqDataSetFromTximport(txi_GBA_1_noPSP, colData = sample_metadata_GBA_1_noPSP, design = ~disease)
+
+dds_disease <- DESeq(dds_disease, minReplicatesForReplace = Inf) #filtering the counts- this line of code doesnt really make sense to me
+min_counts <- 10
+keep_feature_disease <- rowMeans(counts(dds_disease)) >= min_counts 
+dds_disease <- dds_disease[keep_feature_disease, ]
+
+vsd_disease <- vst(dds_disease, blind = FALSE)
+```
+
+# boxplot and gene density plot of vsd values to look at normalization
+```{r}
+vsd_disease.df <- as.data.frame(assay(vsd_disease))
+colnames(vsd_disease.df) <- sample_metadata_GBA_1_noPSP$name
+boxplot.df <- melt(vsd_disease.df, variable.name = "Sample", value.name = "Counts")
+
+ggplot(boxplot.df, aes(x = Sample, y = Counts)) +
+  geom_boxplot(fill = "#CCFFCC") +
+  xlab("Sample Name") +
+  ylab(expression("VST counts")) +
+  #coord_cartesian(ylim = c(0, 25)) +
+  theme_classic(16) +
+  theme(panel.grid = element_blank()) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75))) +
+ggtitle("Count distribution across samples GBA\n (Lang et al. 2019)")  
+
+##Gene density plot
+vsd_disease.df %>%
+  rownames_to_column("gene") %>%
+  as_tibble() %>%
+  gather(key = sample_name, value = count, -gene) %>%
+  #inner_join(sample_metadata, by = c("sample_name" = "sample_name")) %>%
+  # filter(age == "old") %>% (didn't do this) %>%
+  ggplot(aes(count, fill = sample_name, color = sample_name)) +
+  geom_line(stat = "density", adjust = 0.75) +
+  theme_bw() +
+  scale_color_d3() +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ylab("Density of Read Counts") +
+  xlab("Variance Stabilised Read Count") +
+  facet_grid(rows = vars(sample_name)) + 
+  theme(legend.position = "none") +
+  ggtitle("Gene Density Plot GBA (Lang et al. 2019)") +
+  theme(strip.text.y = element_text(angle = 360)) + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+
+#new size gene density plot 
+vsd_disease.df %>%
+  rownames_to_column("gene") %>%
+  as_tibble() %>%
+  gather(key = sample_name, value = count, -gene) %>%
+  #inner_join(sample_metadata, by = c("sample_name" = "sample_name")) %>%
+  # filter(age == "old") %>% (didn't do this) %>%
+  ggplot(aes(count, fill = sample_name, color = sample_name)) +
+  geom_line(stat = "density", adjust = 0.75) +
+  theme_bw() +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1)),
+        axis.text.x = element_text(hjust = 1)) +
+  scale_color_d3() +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ylab("Density of Read Counts") +
+  xlab("Variance Stabilised Read Count") +
+  facet_grid(rows = vars(sample_name)) + 
+  theme(legend.position = "none") +
+  ggtitle("Gene Density Plot GBA (Lang et al. 2019)") +
+  theme(strip.text.y = element_text(angle = 360)) + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+
+```
+
+# mean sd plot to show the effect of the vsd transformation. doing it on normalized counts first and then transformed counts
+```{r}
+# normalized counts
+counts_GBA <- counts(dds_disease, normalized = T)
+
+transformed_counts <- assay(vsd_disease)
+
+meanSDuntransformed2 <- meanSdPlot(counts(dds_disease), rank = FALSE)
+meanSDuntransformed2$gg +
+  xlab("Mean") +
+  ylab("Standard deviation") +
+  theme_classic(14) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)),
+      axis.text.x = element_text(hjust = 1)) +
+  ggtitle ("Mean vs SD of unstransformed gene counts GBA\n (Lang et al. 2019)")
+
+#showing the effect of VST
+meanSDVST <- meanSdPlot(assay(vsd_disease), rank = FALSE)
+meanSDVST$gg +
+  xlab("Mean") +
+  ylab("Standard deviation") +
+  theme_classic(14) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)),
+      axis.text.x = element_text(hjust = 1)) +
+  ggtitle ("Mean vs SD of VST gene counts GBA\n (Lang et al. 2019)")
+```
+
+# getting the results and the LFC shrinkage values 
+```{r}
+res <- results(dds_disease)
+resultsNames(dds_disease)
+head(res)
+resLFC <- lfcShrink(dds_disease, coef="disease_disease_vs_control", type="apeglm") # shrinking the log fold change
+```
+
+# MA plot before and after shrinkage
+```{r}
+plotMA(res, ylim=c(-4,4)) # plotting the log fold change as per the mean
+plotMA(resLFC, ylim=c(-4,4))
+```
+
+# Creating a data frame with the LFC shrink results and counts for all genes and saving this
+```{r}
+counts_GBA.df <- data.frame(counts_GBA) %>%
+  rownames_to_column(var = "geneid") #counts table to merge with the results table
+
+ResultsandCounts.df <- data.frame(resLFC) %>%
+  rownames_to_column(var = "geneid") %>% 
+  inner_join(counts_GBA.df) %>%
+  filter(padj < 0.1) %>%
+  arrange(padj) %>%
+  #arrange(desc(abs(log2FoldChange))) %>% # could also arrange on the basis of the log2foldchange. rowise was in the original code which I removed
+  mutate("sign" = ifelse(log2FoldChange > 0, "upregulated", "downregulated" ))
+ResultsandCounts.df <- mutate(ResultsandCounts.df, meancounts_control = rowMeans(ResultsandCounts.df[,7:8]))
+ResultsandCounts.df <- mutate(ResultsandCounts.df, meancounts_disease = rowMeans(ResultsandCounts.df[,9:10]))
+as_tibble(ResultsandCounts.df)
+head(ResultsandCounts.df)
+
+biomart_export <- read.delim("/Volumes/Seagate Exp/RWM MSc Rotation/biomart_export.txt") 
+
+ResultsandCounts.df <- ResultsandCounts.df %>% # by joining to the biomart export file we are assigning gene names and descriptions to the Gene ID for all the differentially expressed genes
+  left_join(biomart_export,
+  by = c('geneid' = 'Gene.stable.ID'))
+```
+
+# Volcano plot with LFC values to show top gene expression. Everything with Padj <0.5 is in blue
+```{r}
+#creating the dataframe
+volcanoplot.df <- data.frame(resLFC)#new data frane that is not filtered by the padj values
+volcanoplot.df <- rownames_to_column(volcanoplot.df, "geneid")
+volcanoplot.df <- volcanoplot.df %>% left_join(biomart_export,
+                                      by = c("geneid" = "Gene.stable.ID"))
+threshold <- volcanoplot.df$padj < 0.1 #changed this to 0.1 cut off because the padj value is 0.1
+volcanoplot.df$threshold <- threshold
+volcanoplot.df <- volcanoplot.df[order(volcanoplot.df$padj), ] # ordering by padj values
+
+volcanoplot.df$gene_labels <- "" #creating another column which has empty values "" 
+volcanoplot.df$gene_labels[1:10] <- volcanoplot.df$Gene.name[1:10] # these are the geneIDs with the lowest padj value because they are the first 10 rows in the dataframe
+head(volcanoplot.df)
+
+#making the plot
+ggplot(volcanoplot.df) +
+  geom_point(aes(x=log2FoldChange, y=-log10(padj), colour=threshold)) + #is the log10 adj p value actually log 10 or is it just the adjusted p value- why is it -log 10 rather than just padj value- what is the padj value, should go back and remove the NA values for the means 
+  ggtitle("Differentially expressed genes GBA\n (Lang et al. 2019)") +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  geom_vline(xintercept = 0, color="grey") +
+ # geom_hline(yintercept = 0) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color="grey") +
+  geom_text_repel(aes(x=log2FoldChange, y=-log10(padj), label = gene_labels), size = 3) +
+  coord_cartesian(xlim=c(-10,10)) +
+  theme_classic(16) +
+  theme(panel.grid = element_blank()) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75))) 
+```
