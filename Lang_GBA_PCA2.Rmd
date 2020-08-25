@@ -28,7 +28,6 @@ library(tidyverse)
 library(reshape2)
 library(ggrepel)
 library(readr)
-
 ```
 
 #Importing files to make the dds object
