@@ -1,0 +1,264 @@
+---
+title: "PCA_ConnorRobson"
+author: "Tara Diviney"
+date: "8/25/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+```{r}
+library(dplyr)
+library(DESeq2)
+library(tximport)
+library(ggplot2)
+library(ggrepel)
+```
+# load the files and functions and get dds object
+```{r}
+Exp1_Design_DAneurons_metadata <- read.delim("/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2_Biogen/Exp1_Design_DAneurons_metadata.txt")
+Metadata_LRRK2Biogen_filter <- Exp1_Design_DAneurons_metadata[-c(11,12,15,38,44,45,51),]
+
+GTFfile <- "/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/homo_sapiens/Homo_sapiens.GRCh38.96.gtf" #load the transcript gtf file
+tx2gene <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/tx2gene.csv")
+paste("The tx2gene table contains ", length(tx2gene$TXNAME), " entries.", sep = "")
+
+Metadata_LRRK2BiogenD56 <- subset(Metadata_LRRK2Biogen_filter, Day == 'D56') # selecting rows based on values for day that are D56
+
+files_LRRK2BiogenNeuronsD56 <- file.path("/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2_Biogen/kallisto_DAneurons_D56", Metadata_LRRK2BiogenD56$ObservationID, "abundance.h5")
+
+txi_biogen_neuronsD56 <- tximport(files_LRRK2BiogenNeuronsD56, type = "kallisto", tx2gene = tx2gene, ignoreTxVersion = T)
+
+dds_D56 <- DESeqDataSetFromTximport(txi_biogen_neuronsD56, colData = Metadata_LRRK2BiogenD56, design = ~1)
+
+dds_D56 <- DESeq(dds_D56, minReplicatesForReplace = Inf) #filtering the counts
+min_counts <- 10
+keep_feature_d56 <- rowMeans(counts(dds_D56)) >= min_counts 
+dds_D56 <- dds_D56[keep_feature_d56, ]
+
+dds_D56 <- DESeq(dds_D56, minReplicatesForReplace = Inf) 
+
+vsd_D56 <- vst(dds_D56, blind = FALSE)
+
+```
+
+
+#Making table for PCA with day 56
+```{r}
+counts_vsd_D56 <- assay(vsd_D56) #creating counts table
+pca_vsd_BiogenneuronsD56 <- prcomp(t(counts_vsd_D56), scale=TRUE)
+
+## make a scree plot to investigate how much variation in the data each principle component accounts for 
+pca_vsd_BiogenneuronsD56.var <- pca_vsd_BiogenneuronsD56$sdev^2 # calculating the square standard deviation of each principle component
+pca_vsd_BiogenneuronsD56.var.per <- round(pca_vsd_BiogenneuronsD56.var/sum(pca_vsd_BiogenneuronsD56.var)*100, 1) #converting to a percentage to account for the percentage variation
+
+barplot(pca_vsd_BiogenneuronsD56.var.per, main="Scree Plot LRRK2 (Connor-Robson et al. 2019)", xlab="Principal Component", ylab="Percent Variation", col = "#FFCC99")
+
+#making scree plot ggplot
+pca_vsd_BiogenneuronsD56.var.per.df <- pca_vsd_BiogenneuronsD56.var.per %>%
+  as.data.frame()
+pca_vsd_BiogenneuronsD56.var.per.df$Percent_Variation <- pca_vsd_BiogenneuronsD56.var.per.df$.
+ 
+ggplot(pca_vsd_BiogenneuronsD56.var.per.df, aes(x = c(1:25), y = Percent_Variation)) +
+  geom_bar(stat='identity', color = "#FF9900", fill = "#FFCC99") +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  xlab("Principal component") +
+  ylab("Percent Variation") +
+  ggtitle("Scree Plot LRRK2\n (Connor-Robson et al. 2019)")
+
+# make PCA plot with ggplot
+pca_vsd_BiogenneuronsD56.data <- data.frame(Sample=rownames(pca_vsd_BiogenneuronsD56$x),
+                                               PC1=pca_vsd_BiogenneuronsD56$x[,1],
+                                               PC2=pca_vsd_BiogenneuronsD56$x[,2],
+                                               PC3=pca_vsd_BiogenneuronsD56$x[,3],
+                                               PC4=pca_vsd_BiogenneuronsD56$x[,4],
+                                               PC5=pca_vsd_BiogenneuronsD56$x[,5],
+                                               PC6=pca_vsd_BiogenneuronsD56$x[,6],
+                                               PC7=pca_vsd_BiogenneuronsD56$x[,7],
+                                               PC8=pca_vsd_BiogenneuronsD56$x[,8],
+                                               PC9=pca_vsd_BiogenneuronsD56$x[,9])
+                                               
+
+pca_vsd_BiogenneuronsD56.data$SampleName <- Metadata_LRRK2BiogenD56$SampleName
+pca_vsd_BiogenneuronsD56.data$mutation <- Metadata_LRRK2BiogenD56$SampleType
+pca_vsd_BiogenneuronsD56.data$gender <- Metadata_LRRK2BiogenD56$gender
+pca_vsd_BiogenneuronsD56.data$time_point <- Metadata_LRRK2BiogenD56$Day
+
+combinedpcas.df.2 <- pca_vsd_BiogenneuronsD56.data %>%
+  pivot_longer(PC1:PC9, names_to = 'PC', values_to = 'x')
+
+ggplot(combinedpcas.df.2, aes(x = PC, y = x, color = mutation, shape = gender)) +
+  geom_point(size =3) +
+  theme_classic (16) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  xlab("Principal Component") +
+  ylab("Component Coordinate") +
+  ggtitle("Variation across Principal Components\n LRRK2 (Connor-Robson et al. 2019)")
+
+#making a PCA biplot
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC1, y=PC5)) +
+  geom_point(aes(color=mutation, shape=gender), size=5) +
+  xlab(paste("PC1 - ", pca_vsd_BiogenneuronsD56.var.per[1], "%", sep="")) +
+  ylab(paste("PC5 - ", pca_vsd_BiogenneuronsD56.var.per[5], "%", sep="")) +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  ggtitle("PCA LRRK2\n (Connor-Robson et al. 2019)")
+
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC1, y=PC5)) +
+  geom_point(aes(color=mutation, shape=gender), size=3) +
+  xlab(paste("PC1 - ", pca_vsd_BiogenneuronsD56.var.per[1], "%", sep="")) +
+  ylab(paste("PC5 - ", pca_vsd_BiogenneuronsD56.var.per[5], "%", sep="")) +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  ggtitle("PCA LRRK2\n (Connor-Robson et al. 2019)")
+
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC1, y=PC5)) +
+  geom_point(aes(color=SampleName), size=5) +
+  xlab(paste("PC1 - ", pca_vsd_BiogenneuronsD56.var.per[1], "%", sep="")) +
+  ylab(paste("PC5 - ", pca_vsd_BiogenneuronsD56.var.per[5], "%", sep="")) +
+  scale_color_d3() +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  ggtitle("PCA LRRK2\n (Connor-Robson et al. 2019)")
+
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC1, y=PC5)) +
+  geom_point(aes(color=SampleName), size=3) +
+  xlab(paste("PC1 - ", pca_vsd_BiogenneuronsD56.var.per[1], "%", sep="")) +
+  ylab(paste("PC5 - ", pca_vsd_BiogenneuronsD56.var.per[5], "%", sep="")) +
+  theme_classic(16) +
+  scale_color_d3() +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1.0))) +
+  ggtitle("PCA LRRK2\n (Connor-Robson et al. 2019)")
+
+```
+
+#other biplots not included
+```{r}
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC1, y=PC2, label=SampleName)) +
+  geom_text() +
+  xlab(paste("PC1 - ", pca_vsd_BiogenneuronsD56.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_BiogenneuronsD56.var.per[2], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen Neurons D56 (VST)")
+
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC1, y=PC2)) +
+  geom_point(aes(color=mutation), size=3) +
+  xlab(paste("PC1 - ", pca_vsd_BiogenneuronsD56.var.per[1], "%", sep="")) +
+  ylab(paste("PC2 - ", pca_vsd_BiogenneuronsD56.var.per[2], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen LRRK2 Neurons D56 (VST) 2")
+```
+# pca 3 and 4
+```{r}
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC3, y=PC4, label=SampleName)) +
+  geom_text() +
+  xlab(paste("PC3 - ", pca_vsd_BiogenneuronsD56.var.per[3], "%", sep="")) +
+  ylab(paste("PC4 - ", pca_vsd_BiogenneuronsD56.var.per[4], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen Neurons D56 (VST)")
+
+
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC3, y=PC4)) +
+  geom_point(aes(color=mutation), size=3) +
+  xlab(paste("PC3 - ", pca_vsd_BiogenneuronsD56.var.per[3], "%", sep="")) +
+  ylab(paste("PC4 - ", pca_vsd_BiogenneuronsD56.var.per[4], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen LRRK2 Neurons D56 (VST) 2")
+
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC3, y=PC4)) +
+  geom_point(aes(color=SampleName), size=3) +
+  xlab(paste("PC3 - ", pca_vsd_BiogenneuronsD56.var.per[3], "%", sep="")) +
+  ylab(paste("PC4 - ", pca_vsd_BiogenneuronsD56.var.per[4], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen LRRK2 Neurons D56 (VST) 2")
+```
+#pca 5 and 6
+```{r}
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC5, y=PC6, label=SampleName)) +
+  geom_text() +
+  xlab(paste("PC5 - ", pca_vsd_BiogenneuronsD56.var.per[5], "%", sep="")) +
+  ylab(paste("PC6 - ", pca_vsd_BiogenneuronsD56.var.per[6], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen Neurons D56 (VST)")
+
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC5, y=PC6)) +
+  geom_point(aes(color=mutation), size=3) +
+  xlab(paste("PC5 - ", pca_vsd_BiogenneuronsD56.var.per[5], "%", sep="")) +
+  ylab(paste("PC6 - ", pca_vsd_BiogenneuronsD56.var.per[6], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen LRRK2 Neurons D56 (VST) 2")
+```
+
+#pc7 and pc8
+```{r}
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC7, y=PC8, label=SampleName)) +
+  geom_text() +
+  xlab(paste("PC7 - ", pca_vsd_BiogenneuronsD56.var.per[7], "%", sep="")) +
+  ylab(paste("PC8 - ", pca_vsd_BiogenneuronsD56.var.per[8], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen Neurons D56 (VST)")
+
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC7, y=PC8)) +
+  geom_point(aes(color=mutation), size=3) +
+  xlab(paste("PC7 - ", pca_vsd_BiogenneuronsD56.var.per[7], "%", sep="")) +
+  ylab(paste("PC8 - ", pca_vsd_BiogenneuronsD56.var.per[8], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen LRRK2 Neurons D56 (VST) 2")
+```
+
+
+
+#pc1 and pc8
+```{r}
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC1, y=PC8, label=SampleName)) +
+  geom_text() +
+  xlab(paste("PC1 - ", pca_vsd_BiogenneuronsD56.var.per[1], "%", sep="")) +
+  ylab(paste("PC8 - ", pca_vsd_BiogenneuronsD56.var.per[8], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen Neurons D56 (VST)")
+
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC1, y=PC8)) +
+  geom_point(aes(color=mutation, shape=gender), size=3) +
+  xlab(paste("PC1 - ", pca_vsd_BiogenneuronsD56.var.per[1], "%", sep="")) +
+  ylab(paste("PC8 - ", pca_vsd_BiogenneuronsD56.var.per[8], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen LRRK2 Neurons D56 (VST) 2")
+```
+
+#pc5 and pc8
+```{r}
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC5, y=PC8, label=SampleName)) +
+  geom_text() +
+  xlab(paste("PC5 - ", pca_vsd_BiogenneuronsD56.var.per[5], "%", sep="")) +
+  ylab(paste("PC8 - ", pca_vsd_BiogenneuronsD56.var.per[8], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen Neurons D56 (VST)")
+
+ggplot(data=pca_vsd_BiogenneuronsD56.data, aes(x=PC5, y=PC8)) +
+  geom_point(aes(color=mutation), size=3) +
+  xlab(paste("PC5 - ", pca_vsd_BiogenneuronsD56.var.per[5], "%", sep="")) +
+  ylab(paste("PC8 - ", pca_vsd_BiogenneuronsD56.var.per[8], "%", sep="")) +
+  theme_bw() +
+  ggtitle("PCA Biogen LRRK2 Neurons D56 (VST) 2")
+```
+
+
