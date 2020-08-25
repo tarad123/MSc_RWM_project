@@ -1,0 +1,219 @@
+---
+title: "Sandor DE genes"
+author: "Tara Diviney"
+date: "8/25/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+# load libraries
+```{r}
+library(dplyr)
+library(DESeq2)
+library(GenomicFeatures)
+library(tximport)
+library(rhdf5)
+library(ggplot2)
+library("readr")
+library("tximportData")
+library(apeglm)
+library(tidyverse)
+library(reshape2)
+library(ggrepel)
+library(reshape2)
+library(ggsci)
+```
+
+# Import files to make dds object. 
+Removing the second row in metadata table to only include one OX199 patient. Removed 2nd not first to match order in table 1 in Sandor paper and to match the files folder name
+```{r}
+sample_metadata <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/metadata_lrrk2_gba.csv") #load sample metadata file
+metadata_LRRK2 <- sample_metadata[c(1,3:6),c(1:16)]
+
+tx2gene <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/tx2gene.csv") 
+paste("The tx2gene table contains ", length(tx2gene$TXNAME), " entries.", sep = "")
+
+files_LRRK2_repeatremoved <- file.path("/Volumes/Seagate\ Exp/RWM\ MSc\ Rotation/Kallisto/LRRK2_trimmed_DeSeq2_repeatremoved", metadata_LRRK2$folder, "abundance.h5") # create a list of kallisto files 
+
+names(files_LRRK2_repeatremoved) <- metadata_LRRK2$sample_name #adds another column to the files table that labels the files according to the sample from which they came
+
+txi_LRRK2 <- tximport(files_LRRK2_repeatremoved, type = "kallisto", tx2gene = tx2gene, ignoreTxVersion = T)
+```
+
+
+# Creating dds object with design ~ disease
+
+```{r}
+ddsLRRK2_disease <- DESeqDataSetFromTximport(txi_LRRK2, colData = metadata_LRRK2, design = ~disease)
+
+ddsLRRK2_disease <- DESeq(ddsLRRK2_disease, minReplicatesForReplace = Inf) #filtering the counts- this line of code doesnt really make sense to me
+min_counts <- 10
+keep_feature_disease <- rowMeans(counts(ddsLRRK2_disease)) >= min_counts 
+ddsLRRK2_disease <- ddsLRRK2_disease[keep_feature_disease, ]
+
+vsdLRRK2_disease <- vst(ddsLRRK2_disease, blind = FALSE)
+```
+
+# boxplot of vsd values to look at normalization
+```{r}
+
+vsdLRRK2_disease.df <- as.data.frame(assay(vsdLRRK2_disease))
+colnames(vsdLRRK2_disease.df) <- c("Control_1", "Control_2", "LRRK2_1", "LRRK2_2", "LRRK3_3")
+boxplotLRRK2.df <- melt(vsdLRRK2_disease.df, variable.name = "Sample", value.name = "Counts")
+
+ggplot(boxplotLRRK2.df, aes(x = Sample, y = Counts)) +
+  geom_boxplot(fill = "#CCCFFF") + 
+  xlab("Sample Name") +
+  theme_classic(16) +
+theme(panel.grid = element_blank()) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75))) +
+  ggtitle("Count distribution across samples LRRK2\n (Sandor et al. 2017)")
+
+##Gene density plot to look for normalization
+vsdLRRK2_disease.df %>%
+  rownames_to_column("gene") %>%
+  as_tibble() %>%
+  gather(key = sample_name, value = count, -gene) %>%
+  #inner_join(sample_metadata, by = c("sample_name" = "sample_name")) %>%
+  # filter(age == "old") %>% (didn't do this) %>%
+  ggplot(aes(count, fill = sample_name, color = sample_name)) +
+  geom_line(stat = "density", adjust = 0.75) +
+  theme_bw() +
+  theme(plot.title = element_text(size = rel(2.0), hjust = 0.5),
+       axis.title = element_text(size = rel(1.5)),
+       axis.text = element_text(size = rel(1)),
+        axis.text.x = element_text(hjust = 1)) +
+  scale_color_d3() +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ylab("Density of Read Counts") +
+  xlab("Variance Stabilised Read Count") +
+  facet_grid(rows = vars(sample_name)) + 
+  theme(legend.position = "none") +
+  ggtitle("Gene Density Plot LRRK2\n (Sandor et al. 2017)") +
+  theme(strip.text.y = element_text(angle = 360)) + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank())
+```
+
+# mean sd plot to show the effect of the vsd transformation. doing it on normalized counts first and then transformed counts
+```{r}
+# normalized counts
+counts_LRRK2 <- counts(ddsLRRK2_disease, normalized = T)
+
+# vst transformed counts
+transformed_counts_LRRK2 <- assay(vsdLRRK2_disease)
+
+meanSDuntrans2 <- meanSdPlot(counts(ddsLRRK2_disease), ranks = FALSE)
+meanSDuntrans2$gg + theme_classic() + xlab("Mean") +
+  ylab("Standard deviation") +
+  theme_classic(14) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)),
+      axis.text.x = element_text(hjust = 1)) +
+  ggtitle ("Mean vs SD of unstransformed gene counts LRRK2\n (Sandor et al. 2017)")
+
+meanSDVST <- meanSdPlot(assay(vsdLRRK2_disease))
+meanSDVST$gg + theme_classic() + xlab("Mean") +
+  ylab("Standard deviation") +
+  theme_classic(14) +
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)),
+      axis.text.x = element_text(hjust = 1)) +
+  ggtitle ("Mean vs SD of unstransformed gene counts LRRK2\n (Sandor et al. 2017)")
+
+```
+
+# getting the results and the LFC shrinkage values 
+```{r}
+res_LRRK2 <- results(ddsLRRK2_disease)
+resultsNames(ddsLRRK2_disease)
+head(res_LRRK2)
+res_LRRK2[rownames(res_LRRK2) == 'ENSG00000101327',]
+resLFC_LRRK2 <- lfcShrink(ddsLRRK2_disease, coef="disease_disease_vs_control", type="apeglm") # shrinking the log fold change
+```
+
+# MA plot before and after shrinkage
+```{r}
+plotMA(res_LRRK2, ylim=c(-4,4)) # plotting the log fold change as per the mean
+plotMA(resLFC_LRRK2, ylim=c(-4,4))
+```
+
+# creating a dataframe combining the deseq results with the count values. then combining this dataframe with a biomart file to get the names and descriptions of the significantly differentially expressed genes 
+```{r}
+counts_LRRK2.df <- data.frame(counts_LRRK2) %>%
+  rownames_to_column(var = "geneid") #first creating a counts table to merge with the results table
+
+ResultsandCountsLRRK2.df <- data.frame(resLFC_LRRK2) %>%
+  rownames_to_column( var = "geneid") %>%
+  inner_join(counts_LRRK2.df) %>%
+  filter(padj < 0.1) %>%
+  arrange(padj) %>%
+  #arrange(desc(abs(log2FoldChange))) %>% # could also arrange on the basis of the log2foldchange. rowise was in the original code which I removed
+  mutate("sign" = ifelse(log2FoldChange > 0, "upregulated", "downregulated" ))
+ResultsandCountsLRRK2.df <- mutate(ResultsandCountsLRRK2.df, meancounts_control = rowMeans(ResultsandCountsLRRK2.df[,7:8]))
+ResultsandCountsLRRK2.df <- mutate(ResultsandCountsLRRK2.df, meancounts_disease = rowMeans(ResultsandCountsLRRK2.df[,9:11]))
+as_tibble(ResultsandCountsLRRK2.df)
+
+biomart_export <- read.delim("/Volumes/Seagate Exp/RWM MSc Rotation/biomart_export.txt")
+
+ResultsandCountsLRRK2.df <- ResultsandCountsLRRK2.df %>% # by joining to the biomart export file we are assigning gene names and descriptions to the Gene ID for all the differentially expressed genes
+  left_join(biomart_export,
+  by = c('geneid' = 'Gene.stable.ID'))
+```
+# Volcano plot with LFC values to show top gene expression. Everything with Padj <0.5 is in blue
+```{r}
+#creating the dataframe
+volcanoplotLRRK2.df <- data.frame(resLFC_LRRK2)#new data frane that is not filtered by the padj values
+volcanoplotLRRK2.df <- rownames_to_column(volcanoplotLRRK2.df, "geneid")
+volcanoplotLRRK2.df <- volcanoplotLRRK2.df %>% left_join(biomart_export,
+                                      by = c("geneid" = "Gene.stable.ID"))
+thresholdLRRK2 <- volcanoplotLRRK2.df$padj < 0.1 #changed this to 0.1 cut off because the padj value is 0.1
+volcanoplotLRRK2.df$threshold <- thresholdLRRK2
+volcanoplotLRRK2.df <- volcanoplotLRRK2.df[order(volcanoplotLRRK2.df$padj), ] # ordering by padj values
+
+volcanoplotLRRK2.df$gene_labels <- "" #creating another column which has empty values "" 
+volcanoplotLRRK2.df$gene_labels[1:10] <- volcanoplotLRRK2.df$Gene.name[1:10] # these are the geneIDs with the lowest padj value because they are the first 10 rows in the dataframe
+head(volcanoplotLRRK2.df)
+
+ggplot(volcanoplotLRRK2.df) +
+  geom_point(aes(x=log2FoldChange, y=-log10(padj), colour=threshold)) + #is the log10 adj p value actually log 10 or is it just the adjusted p value- why is it -log 10 rather than just padj value- what is the padj value, should go back and remove the NA values for the means 
+  ggtitle("Differentially expressed genes\n (Sandor et al. 2017)") +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  geom_vline(xintercept = 0, color = "grey") +
+  #geom_hline(yintercept = 0) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color="grey") +
+  geom_text_repel(aes(x=log2FoldChange, y=-log10(padj), label = gene_labels), size = 3) +
+  coord_cartesian(xlim=c(-10,10)) +
+  theme_classic(16) +
+  theme(panel.grid = element_blank()) +
+   theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75))) 
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
