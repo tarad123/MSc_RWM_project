@@ -1,0 +1,242 @@
+---
+title: "correlation_BiogenLRRK2_downcorrelation_new_new"
+author: "Tara Diviney"
+date: "8/2/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+###Investigating correlation of Biogen LRRK2 Genes 
+
+##Want to get the vsd counts for Differential expressed genes- to do this run DeSeq2
+#This script is a modified version of Pete's code https://github.com/peterkilfeather/thesis/blob/master/modules/correlation_priority.R
+```{r}
+library(dplyr)
+library(tidyverse)
+library(DESeq2)
+library(GenomicFeatures)
+library(tximport)
+library(rhdf5)
+library(Hmisc)
+library(mgcv)
+library(igraph)
+library(RCy3)
+library(ggplot2)
+library(ggrepel)
+```
+
+#Importing files to DeSeq2 and running DeSeq2 to get the vsd counts 
+```{r}
+Exp1_Design_DAneurons_metadata <- read.delim("/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2_Biogen/Exp1_Design_DAneurons_metadata.txt")
+Metadata_LRRK2Biogen_filter <- Exp1_Design_DAneurons_metadata[-c(11,12,15,38,44,45,51),] # the 7 numbers listed 11 to 51 in the order of this list there is no kallisto files for.5 out of 7 are D35 anyway...
+metadata_tableD56 <- subset(Metadata_LRRK2Biogen_filter, Day == "D56")
+metadata_tableD56 <- metadata_tableD56[c(1,4,7,10,13,16,18,21,23),] #taking the first technical replicate of every sample
+
+GTFfile <- "/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/homo_sapiens/Homo_sapiens.GRCh38.96.gtf" #load the transcript gtf file
+tx2gene <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Kallisto/tx2gene.csv")
+paste("The tx2gene table contains ", length(tx2gene$TXNAME), " entries.", sep = "")
+
+files_D56rep1 <- file.path("/Volumes/Seagate Exp/RWM MSc Rotation/LRRK2_Biogen/kallisto_DAneurons_D56_techrep1", metadata_tableD56$ObservationID, "abundance.h5")
+names(files_D56rep1) <- metadata_tableD56$SampleName
+View(files_D56rep1)
+
+txi_DAneuronsrep1 <- tximport(files_D56rep1, type = "kallisto", tx2gene = tx2gene, ignoreTxVersion = T)
+
+dds_LRRK2techrep1 <- DESeqDataSetFromTximport(txi_DAneuronsrep1, colData = metadata_tableD56, design = ~ gender + SampleType)
+
+dds_LRRK2techrep1 <- DESeq(dds_LRRK2techrep1, minReplicatesForReplace = Inf) #filtering the counts
+min_counts <- 10
+keep_feature <- rowMeans(counts(dds_LRRK2techrep1)) >= min_counts 
+dds_LRRK2techrep1 <- dds_LRRK2techrep1[keep_feature, ]
+
+counts_LRRK2 <- counts(dds_LRRK2techrep1, normalized = T)
+
+vsd_LRRK2techrep1 <- vst(dds_LRRK2techrep1, blind = FALSE) # We will be using these vsd counts 
+
+```
+
+#Thw first file contains differentially expressed genes in Biogen LRRK2. THE 2nd file is those genes that are in common with GBA. Also importing the biomart export file that contains gene names and descriptions
+```{r}
+BiogenDAneuronsD56techrep1_DEgenes <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/BiogenDAneuronsD56techrep1_DEgenes.csv")
+nrow(BiogenDAneuronsD56techrep1_DEgenes)
+
+LRRK2_Biogen_GBA <- read.csv("/Volumes/Seagate Exp/RWM MSc Rotation/Joined_tables/LRRK2_Biogen_GBA.csv")
+LRRK2_Biogen_GBA <- (LRRK2_Biogen_GBA)[-238,]
+
+biomart_export <- read.delim("/Volumes/Seagate Exp/RWM MSc Rotation/biomart_export.txt")
+```
+
+#We now want the vsd counts of the genes that were differentially expressed. Will get the row numbers of the total DE genes and the row numbers of our vsd counts
+```{r}
+nrow(BiogenDAneuronsD56techrep1_DEgenes) #3928 genes that were differentially expressed 
+nrow(LRRK2_Biogen_GBA) #275 genes that were commonly DE between LRRK2 Biogen and GBA 
+nrow(assay(vsd_LRRK2techrep1)) #16278 total genes 
+subset <- assay(vsd_LRRK2techrep1)[rownames(vsd_LRRK2techrep1) %in% LRRK2_Biogen_GBA$geneid,] #getting the vsd counts table for the DE genes only
+nrow(subset) #to sanity check there are 275 rows- the same as the number of differentially expressed genes 
+```
+
+#create subsets based on the genes whose expression values go down
+```{r}
+subset_down <- assay(vsd_LRRK2techrep1)[rownames(vsd_LRRK2techrep1) %in% (LRRK2_Biogen_GBA %>% filter(log2FoldChange_BiogenLRRK2<0) %>%
+  pull(geneid)),] %>%
+  as.data.frame() %>%
+  rownames_to_column("geneid") %>%
+  inner_join(biomart_export,
+  by = c("geneid" = "Gene.stable.ID")) %>%
+  as_tibble() %>%
+  column_to_rownames("Gene.name") %>%
+  dplyr::select(2:10)
+```
+
+#We centre and scale these genes so that our clustering does not prioritise absolute level of expression.
+#Centring means that the mean count of each gene is susbtracted from each of the counts values and then to scale each count value is divided by the standard deviation (but this is all done with the scale function)
+#calculating cor
+```{r}
+subset_down_scaled <- scale(t(subset_down))
+
+subset_down_scaled_cor <- rcorr(subset_down_scaled, type = "spearman")
+
+Rval <- subset_down_scaled_cor$r #gives the r correlation values 
+pval <- subset_down_scaled_cor$P #gives the p values 
+```
+
+#Making a tibble to get the correlation value cut off 
+```{r}
+ind_down <- which(upper.tri(subset_down_scaled_cor$r, diag = FALSE), arr.ind = TRUE)
+nn_down <- dimnames(subset_down_scaled_cor$r)
+
+subset_down_scaled_cor_tib_long <- tibble(geneA = nn_down[[1]][ind_down[, 1]],
+                                            geneB = nn_down[[2]][ind_down[, 2]],
+                                            correlation = subset_down_scaled_cor$r[ind_down]) %>%
+  inner_join(subset_down_scaled_cor$P %>%
+             as.data.frame() %>%
+              #make_tidy("geneA") %>% again I cant do the make_tidy funtion
+              rownames_to_column("geneA") %>%
+               pivot_longer(-geneA, names_to = "geneB", values_to = "p"),
+             by = c("geneA" = "geneA", "geneB" = "geneB")) %>% #why do we use to by arguments here- could we do this below rather than joining twice?
+   mutate(padj = p.adjust(p, method = "fdr")) #%>%
+  #inner_join(biomart_export,
+  #by = c("geneA" = "Gene.stable.ID")) %>%
+  #dplyr::rename("geneA_name" = Gene.name, "geneA_desc." = Gene.description)  %>%
+  #inner_join(biomart_export,
+  #by = c("geneB" = "Gene.stable.ID")) %>%
+  #dplyr::rename("geneB_name" = Gene.name, "geneB_desc." = Gene.description)
+
+#subset_up_scaled_cor_tib_long <- subset_up_scaled_cor_tib_long[,c(1:6,8,7,9)]
+```
+
+#Determine significant correlation cut off. I understand this as getting the correlation value which corresponds to a padj valueof 0.05. this is important becuase we only want to deal with correlations that are significant.
+```{r}
+fit_data_down <- data.frame(x = subset_down_scaled_cor_tib_long$padj, y = subset_down_scaled_cor_tib_long$correlation)
+fit_down <- gam(y ~ s(x, bs = "cs"), data = fit_data_down)
+threshold_down <- predict.gam(fit_down, newdata = data.frame(x = 0.05)) %>%
+  as.numeric()
+```
+
+#plotting the correlation distribution 
+```{r}
+#plotting a graph showing the padj values vs the correlation values
+ggplot(subset_down_scaled_cor_tib_long,
+       aes(x = correlation, y = padj)) +
+  geom_hline(yintercept = 0.05) +
+  geom_smooth() +
+  geom_vline(xintercept = threshold_down) +
+  ggtitle("Plot demostrating significant correlation cutoff")
+
+#plotting a histogram of the distribution of correlation values for the gene pairs in the table
+ggplot(subset_down_scaled_cor_tib_long, aes(x = correlation)) +
+  geom_density() +
+  ggtitle("Distribution of down-correlation values")
+
+ggplot(subset_down_scaled_cor_tib_long, aes(x = correlation)) +
+  geom_histogram(fill = "#FFCCFF", color = "#CC66CC") +
+  ggtitle("Distribution of down-correlation values")
+```
+
+#going to make a network of all the genes that are significantly correlated with eachother ie correlation values over the threshold
+```{r}
+A_down <- subset_down_scaled_cor$r
+A_down[A_down < threshold_down | A_down == 1] <- 0 #changing this because I want to get rid of the interactions with eachother and make them 0. We only want genes that are significantly correlated with eachother ie above the threshold to be connected to eachother. Anything less than the threshold value is being made to 0
+
+g_down <- graph.adjacency(A_down,
+      mode = "upper",
+      weighted = TRUE,
+      diag = FALSE)
+
+#not sure if this LFC  information is correct
+V(g_down) #can run to get a list of the vertices aka the Ensembl ids which are the nodes
+V(g_down)$fold_change <-  LRRK2_Biogen_GBA %>% #can input fold change information abotu the genes
+  filter(log2FoldChange_BiogenLRRK2 < 0) %>%
+  pull(log2FoldChange_BiogenLRRK2)
+
+```
+
+#Getting metrics
+```{r}
+subset_down_scaled_cor_graph_metrics <- data.frame(degree = degree(g_down),
+                                      weighted_degree = strength(g_down),
+                                       betweenness = betweenness(g_down),
+                                        foldchange = V(g_down)$fold_change) %>%
+                                        rownames_to_column("genename") 
+
+ggplot(subset_down_scaled_cor_graph_metrics, aes(x = degree, y = betweenness, label = ifelse(betweenness > 140, genename, ""))) +
+  geom_point(color = "#69b3a2") +
+  xlab("Degree") +
+  ylab("Betweenness") +
+  ggtitle("Correlation parameters of downregulated genes") +
+  geom_text_repel() +
+  theme_classic() 
+
+#new graph
+ggplot(subset_down_scaled_cor_graph_metrics, aes(x = degree, y = betweenness, label = ifelse(betweenness > 140, genename, ""))) +
+  geom_point(color = "#69b3a2") +
+  xlab("Degree") +
+  ylab("Betweenness") +
+  ggtitle("Centrality parameters of downregulated genes") +
+  geom_text_repel(size = 4) +
+  theme_classic(16) +
+  theme(plot.title = element_text(size = rel(1.25), hjust = 0.5),
+       axis.title = element_text(size = rel(1.0)),
+       axis.text = element_text(size = rel(0.75)))
+
+ggplot(subset_down_scaled_cor_graph_metrics,
+       aes(x = weighted_degree)) +
+  geom_density() 
+```
+
+#filling in nodes and getting adjacency values
+```{r}
+V(g_down)$weighted_degree <- subset_down_scaled_cor_graph_metrics$weighted_degree
+V(g_down)$betweenness <- subset_down_scaled_cor_graph_metrics$betweenness
+
+   
+plot(g_down)
+createNetworkFromIgraph(g_down,"Down_corrleationvalues")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
